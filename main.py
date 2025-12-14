@@ -223,6 +223,8 @@ class TrafficBotProApp(ctk.CTk):
         self.total_tasks = 0
         self.tested_proxies = []
         self.test_stats = {"tested": 0, "active": 0, "dead": 0}
+        self.active_threads = 0
+        self.attack_start_time = 0
 
         # --- GUI Layout ---
         self.grid_columnconfigure(0, weight=1)
@@ -292,7 +294,7 @@ class TrafficBotProApp(ctk.CTk):
     def build_dashboard_frame(self):
         dashboard = self.frames["dashboard"]
         dashboard.grid_columnconfigure(0, weight=1)
-        dashboard.grid_rowconfigure(1, weight=1)
+        dashboard.grid_rowconfigure(2, weight=1)  # Adjusted row weight
 
         hud_frame = ctk.CTkFrame(dashboard, fg_color="transparent")
         hud_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
@@ -309,10 +311,22 @@ class TrafficBotProApp(ctk.CTk):
             lbl.pack(pady=(0, 10))
             setattr(self, attr, lbl)
 
+        # --- NEW DASHBOARD PROGRESS SECTION ---
+        dash_prog_frame = ctk.CTkFrame(dashboard, fg_color="transparent")
+        dash_prog_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 10))
+
+        self.dash_status_label = ctk.CTkLabel(dash_prog_frame, text="Status: Idle", text_color="#FFFFFF", anchor="w")
+        self.dash_status_label.pack(fill="x", pady=(0, 5))
+
+        self.dash_progress_bar = ctk.CTkProgressBar(dash_prog_frame, fg_color="#2b2b2b", progress_color="#3B8ED0")
+        self.dash_progress_bar.pack(fill="x")
+        self.dash_progress_bar.set(0)
+        # --------------------------------------
+
         # Log Console
         self.dashboard_log_console = ctk.CTkTextbox(dashboard, state="disabled", font=("Consolas", 12),
                                                     fg_color="#2b2b2b", text_color="#FFFFFF")
-        self.dashboard_log_console.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
+        self.dashboard_log_console.grid(row=2, column=0, sticky="nsew", padx=10, pady=(5, 10))
 
     def build_attack_frame(self):
         attack_frame = self.frames["attack"]
@@ -510,11 +524,24 @@ class TrafficBotProApp(ctk.CTk):
             self.url_input_frame.pack(fill="x")
 
     def browse_file(self):
-        filename = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
-        if filename:
-            self.file_path_entry.delete(0, "end")
-            self.file_path_entry.insert(0, filename)
+        # 1. Force the main window to take focus so the dialog pops up in front
+        self.focus_force()
+        self.update_idletasks()  # Ensure any pending UI updates are done
 
+        try:
+            # 2. Add 'parent=self' to attach the dialog to the app window
+            filename = filedialog.askopenfilename(
+                parent=self,
+                title="Select Proxy List",
+                filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+            )
+
+            if filename:
+                self.file_path_entry.delete(0, "end")
+                self.file_path_entry.insert(0, filename)
+        except Exception as e:
+            # If it fails, log it to the internal console so we can see why
+            self.log_message(f"Browse Error: {e}", "error")
     def log_message(self, message, level="info", target="bot"):
         timestamp = time.strftime("%H:%M:%S")
         colors = {"info": "white", "success": "#2CC985", "error": "#e74c3c", "warning": "#f39c12"}
@@ -573,6 +600,10 @@ class TrafficBotProApp(ctk.CTk):
     def bot_task(self, task_id, url, min_time, max_time, headless_mode):
         if not self.is_running: return
 
+        # --- TRACKING START ---
+        self.active_threads += 1
+        # ----------------------
+
         proxy_data = self.get_random_proxy()
         user_agent = self.ua.random
         proxy_config = None
@@ -600,6 +631,8 @@ class TrafficBotProApp(ctk.CTk):
             except Exception:
                 self.log_message(f"Task {task_id}: Invalid proxy structure.", "error")
                 self.failure_count += 1
+                # Decrement thread count if we exit early
+                self.active_threads -= 1
                 self.after(0, self.update_stats)
                 return
 
@@ -643,6 +676,9 @@ class TrafficBotProApp(ctk.CTk):
             self.log_message(f"Task {task_id}: Error - {str(e)[:50]}...", "error")
             self.failure_count += 1
         finally:
+            # --- TRACKING END ---
+            self.active_threads -= 1
+            # --------------------
             self.after(0, self.update_stats)
 
     def get_random_proxy(self):
@@ -654,9 +690,20 @@ class TrafficBotProApp(ctk.CTk):
     def update_stats(self):
         completed = self.success_count + self.failure_count
         progress = completed / self.total_tasks if self.total_tasks > 0 else 0
+
+        status_text = f"Progress: {completed}/{self.total_tasks} | Success: {self.success_count} | Failed: {self.failure_count}"
+
+        # Update Attack Tab
         self.progress_bar.set(progress)
-        self.stats_label.configure(
-            text=f"Progress: {completed}/{self.total_tasks} | Success: {self.success_count} | Failed: {self.failure_count}")
+        self.stats_label.configure(text=status_text)
+
+        # Update Dashboard Tab (New)
+        try:
+            self.dash_progress_bar.set(progress)
+            self.dash_status_label.configure(text=status_text)
+        except AttributeError:
+            pass  # Use pass in case dashboard hasn't fully loaded yet
+
         if completed >= self.total_tasks and self.total_tasks > 0 and self.is_running:
             self.stop_process()
 
@@ -664,10 +711,38 @@ class TrafficBotProApp(ctk.CTk):
         self.is_running = True
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
+
+        # UI Reset
         self.dashboard_log_console.configure(state="normal")
         self.dashboard_log_console.delete("1.0", "end")
         self.dashboard_log_console.configure(state="disabled")
+
+        # --- METRICS RESET ---
+        self.active_threads = 0
+        self.attack_start_time = time.time()
+        self.monitor_dashboard()  # Start the recursive update loop
+        # ---------------------
+
         threading.Thread(target=self.manager_thread_target, daemon=True).start()
+
+    # --- NEW HELPER METHOD ---
+    def monitor_dashboard(self):
+        """Recursively updates RPS and Thread counts while running"""
+        if not self.is_running:
+            return
+
+        # Update Live Threads
+        self.live_threads_label.configure(text=str(self.active_threads))
+
+        # Update RPS
+        elapsed = time.time() - self.attack_start_time
+        total_reqs = self.success_count + self.failure_count
+        if elapsed > 0:
+            rps = total_reqs / elapsed
+            self.rps_label.configure(text=f"{rps:.2f}")
+
+        # Update every 500ms
+        self.after(500, self.monitor_dashboard)
 
     def stop_process(self):
         self.is_running = False
