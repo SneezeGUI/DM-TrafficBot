@@ -227,11 +227,14 @@ class VirtualGrid(ctk.CTkFrame):
         self.canvas.delete("all")
         self.draw()
 
+    def get_active_objects(self):
+        # Returns the full data objects for active proxies, not just strings
+        return [d for d in self.data if d['status'] == "Active"]
+
     def get_active(self):
         return [f"{d['type'].lower()}://{d['ip']}:{d['port']}" for d in self.data if d['status'] == "Active"]
 
     def get_counts(self):
-        # Calculate stats for the counter display
         counts = {"HTTP": 0, "SOCKS4": 0, "SOCKS5": 0}
         for d in self.data:
             t = d.get('type', 'HTTP').upper()
@@ -315,7 +318,7 @@ class ModernTrafficBot(ctk.CTk):
             btn.grid(row=i + 1, column=0, sticky="ew", padx=10, pady=5)
             self.nav_btns[key] = btn
 
-        ctk.CTkLabel(self.sidebar, text="v3.0.3 Stable", text_color=COLORS["text_dim"], font=("Roboto", 10)).grid(row=5,
+        ctk.CTkLabel(self.sidebar, text="v3.0.5 Stable", text_color=COLORS["text_dim"], font=("Roboto", 10)).grid(row=5,
                                                                                                                   column=0,
                                                                                                                   pady=20)
 
@@ -492,21 +495,57 @@ class ModernTrafficBot(ctk.CTk):
         f = filedialog.askopenfilename()
         if f:
             try:
+                # CLEAR EXISTING DATA
+                self.proxies = []
+                self.buffer = []
+                self.proxy_grid.clear()
+
                 with open(f, 'r') as file:
                     raw = [l.strip() for l in file if l.strip()]
                     self.proxies.extend(raw)
+
                 self.update_proxy_stats()
-                self.log(f"Loaded {len(raw)} proxies.")
+                self.log(f"Cleared previous data. Loaded {len(raw)} proxies.")
             except:
                 pass
 
     def export_active(self):
-        active = self.proxy_grid.get_active()
-        if not active: return self.log("No active proxies to export.")
-        f = filedialog.asksaveasfilename(defaultextension=".txt")
-        if f:
-            with open(f, 'w') as file: file.write("\n".join(active))
-            self.log(f"Exported {len(active)} active proxies.")
+        # AUTOMATIC CATEGORIZED EXPORT
+        active_objs = self.proxy_grid.get_active_objects()
+
+        if not active_objs:
+            return self.log("No active proxies to export.")
+
+        # Ensure 'proxies' directory exists
+        if not os.path.exists("proxies"):
+            os.makedirs("proxies")
+
+        socks_list = []
+        http_list = []
+
+        for p in active_objs:
+            # Reconstruct standard proxy string
+            p_str = f"{p['type'].lower()}://{p['ip']}:{p['port']}"
+
+            if "SOCKS" in p['type']:
+                socks_list.append(p_str)
+            else:
+                http_list.append(p_str)
+
+        try:
+            # Write SOCKS
+            if socks_list:
+                with open("proxies/socks.txt", "w") as f:
+                    f.write("\n".join(socks_list))
+
+            # Write HTTP
+            if http_list:
+                with open("proxies/http.txt", "w") as f:
+                    f.write("\n".join(http_list))
+
+            self.log(f"Auto-Exported: {len(socks_list)} SOCKS, {len(http_list)} HTTP to 'proxies/' folder.")
+        except Exception as e:
+            self.log(f"Export Error: {e}")
 
     def run_scraper(self):
         try:
@@ -616,7 +655,29 @@ class ModernTrafficBot(ctk.CTk):
         viewtime = int(self.slider_viewtime.get())
 
         self.log(f"Starting attack: {threads} threads on {url}")
-        active_proxies = self.proxy_grid.get_active()
+
+        # Get all active proxies
+        all_active = self.proxy_grid.get_active_objects()
+
+        # Filter based on Checkbox Settings
+        allowed = []
+        if self.chk_http.get(): allowed.append("HTTP")
+        if self.chk_http.get(): allowed.append("HTTPS")  # Handle HTTPS as HTTP logic
+        if self.chk_socks4.get(): allowed.append("SOCKS4")
+        if self.chk_socks5.get(): allowed.append("SOCKS5")
+
+        # Create final list for requests (strings)
+        active_proxies = []
+        for p in all_active:
+            # Check if proxy type contains any allowed string (e.g. "SOCKS5" in "SOCKS5")
+            # This is a loose match to catch "HTTP", "HTTPS", "SOCKS5", etc.
+            if any(a in p['type'] for a in allowed):
+                active_proxies.append(f"{p['type'].lower()}://{p['ip']}:{p['port']}")
+
+        if not active_proxies and all_active:
+            self.log(f"Warning: Proxies are active but filtered out by protocol settings.")
+        elif not active_proxies:
+            self.log("No active proxies found.")
 
         def worker():
             ua = UserAgent()
