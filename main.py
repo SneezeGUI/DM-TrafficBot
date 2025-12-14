@@ -9,14 +9,15 @@ import re
 import requests
 import socks
 import socket
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 import queue
 from tkinter import filedialog
 from playwright.sync_api import sync_playwright
 from fake_useragent import UserAgent
 import urllib3
-import pycountry  # pip install pycountry
+import pycountry
+import math
 
 # Suppress InsecureRequestWarning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -60,6 +61,12 @@ class CTkToolTip(object):
             self.widget.after_cancel(id)
 
     def showtip(self, event=None):
+        try:
+            if not self.widget.winfo_exists():
+                return
+        except Exception:
+            return
+
         x = y = 0
         x, y, cx, cy = self.widget.bbox("insert")
         x += self.widget.winfo_rootx() + 25
@@ -130,18 +137,14 @@ class SettingsManager:
 class ProxyScraper:
     @staticmethod
     def scrape(sources_file="sources.txt"):
-        """
-        Reads URLs from sources.txt, fetches them, and extracts IP:Port patterns.
-        """
         proxies = set()
         logs = []
 
-        # Create sources.txt if it doesn't exist
         if not os.path.exists(sources_file):
             with open(sources_file, "w") as f:
+                f.write("https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt\n")
                 f.write(
-                    "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all\n")
-                f.write("https://spys.me/proxy.txt\n")
+                    "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all&ssl=all&anonymity=all\n")
             logs.append(f"Created default {sources_file}")
 
         try:
@@ -153,16 +156,44 @@ class ProxyScraper:
         if not urls:
             return [], ["No sources found in sources.txt"]
 
-        # Regex pattern for IP:Port
-        # Captures 0.0.0.0 to 999.999.999.999:00000 (loose matching)
         proxy_pattern = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}\b")
 
         def fetch_url(url):
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
             try:
-                resp = requests.get(url, timeout=10)
+                resp = requests.get(url, headers=headers, timeout=10)
                 if resp.status_code == 200:
-                    found = proxy_pattern.findall(resp.text)
-                    return found, f"Fetched {len(found)} from {url}"
+                    found = set()
+                    try:
+                        data = resp.json()
+
+                        def get_val(item, keys):
+                            for k in keys:
+                                if k in item: return item[k]
+                                if k.lower() in item: return item[k.lower()]
+                                if k.capitalize() in item: return item[k.capitalize()]
+                            return None
+
+                        items = []
+                        if isinstance(data, dict) and "data" in data:
+                            items = data["data"]
+                        elif isinstance(data, list):
+                            items = data
+
+                        for item in items:
+                            if isinstance(item, dict):
+                                ip = get_val(item, ["ip", "Ip", "IP"])
+                                port = get_val(item, ["port", "Port", "PORT"])
+                                if ip and port:
+                                    found.add(f"{ip}:{port}")
+                    except ValueError:
+                        pass
+
+                    found.update(proxy_pattern.findall(resp.text))
+                    count = len(found)
+                    return list(found), f"Fetched {count} from {url}"
                 return [], f"Failed {url} (Status {resp.status_code})"
             except Exception as e:
                 return [], f"Error {url}: {str(e)[:30]}"
@@ -231,19 +262,13 @@ class ProxyManager:
 class ProxyChecker:
     @staticmethod
     def get_country_data(country_code):
-        """
-        Uses pycountry to get the official name and generates a flag emoji.
-        """
         if not country_code or len(country_code) != 2:
             return "Unknown", "🏳️"
-
         try:
             country = pycountry.countries.get(alpha_2=country_code.upper())
             name = country.name if country else "Unknown"
         except:
             name = "Unknown"
-
-        # Offset calculation for emoji flag
         flag = chr(ord(country_code[0].upper()) + 127397) + chr(ord(country_code[1].upper()) + 127397)
         return name, flag
 
@@ -259,29 +284,22 @@ class ProxyChecker:
             "country_code": "",
             "error": ""
         }
-
         proxies = {"http": proxy, "https": proxy}
-
         try:
             start_time = time.time()
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-
             response = requests.get(target_url, proxies=proxies, timeout=timeout, verify=False, headers=headers)
             end_time = time.time()
-
             result["speed"] = int((end_time - start_time) * 1000)
             result["status"] = "Active"
-
             try:
                 data = response.json()
                 origin_ip = data.get("origin", "").split(',')[0]
                 response_headers = data.get("headers", {})
-
                 via = response_headers.get("Via") or response_headers.get("via")
                 forwarded = response_headers.get("X-Forwarded-For") or response_headers.get("x-forwarded-for")
-
                 if origin_ip == real_ip:
                     result["anonymity"] = "Transparent"
                 elif via or forwarded:
@@ -290,17 +308,14 @@ class ProxyChecker:
                     result["anonymity"] = "Elite"
             except:
                 result["anonymity"] = "Active"
-
             try:
                 geo_url = "http://ip-api.com/json"
                 geo_resp = requests.get(geo_url, proxies=proxies, timeout=5)
                 if geo_resp.status_code == 200:
                     geo_data = geo_resp.json()
-                    # Just get the code, we'll process the name in the UI thread using pycountry
                     result["country_code"] = geo_data.get("countryCode", "")
             except:
                 pass
-
         except requests.exceptions.ConnectTimeout:
             result["error"] = "Timeout"
         except requests.exceptions.ProxyError:
@@ -309,7 +324,6 @@ class ProxyChecker:
             result["error"] = "SSL Error"
         except Exception as e:
             result["error"] = str(e)
-
         return result
 
     @staticmethod
@@ -318,9 +332,7 @@ class ProxyChecker:
             ip_port = raw_proxy.split("://", 1)[1]
         else:
             ip_port = raw_proxy
-
         protocols = ["http", "https", "socks5", "socks4"]
-
         for proto in protocols:
             proxy_str = f"{proto}://{ip_port}"
             res = ProxyChecker.check_proxy(proxy_str, target_url, timeout, real_ip)
@@ -334,7 +346,6 @@ class ProxyChecker:
                 elif "http" in proto:
                     res["type"] = "HTTP"
                 return res
-
         return {
             "proxy": raw_proxy,
             "status": "Failed",
@@ -374,6 +385,12 @@ class TrafficBotProApp(ctk.CTk):
         self.protocol_stats = {"http": 0, "https": 0, "socks4": 0, "socks5": 0}
         self.active_threads = 0
         self.attack_start_time = 0
+
+        # --- OPTIMIZATION: Results Buffer & Virtual Grid ---
+        self.proxy_results_buffer = []
+        self.grid_widgets_pool = []  # Stores reusable widget rows
+        self.GRID_POOL_SIZE = 30  # Only draw this many rows ever
+        # -----------------------------------
 
         try:
             self.real_ip = requests.get("https://api.ipify.org", timeout=5).text
@@ -445,6 +462,9 @@ class TrafficBotProApp(ctk.CTk):
         self.build_settings_frame()
         self.show_frame("dashboard")
 
+        # Start UI Refresh Loop
+        self.update_results_grid_loop()
+
     def build_dashboard_frame(self):
         dashboard = self.frames["dashboard"]
         dashboard.grid_columnconfigure(0, weight=1)
@@ -454,7 +474,6 @@ class TrafficBotProApp(ctk.CTk):
         hud_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
         hud_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        # Stat Cards
         for i, (title, attr) in enumerate(
                 [("Live Threads", "live_threads_label"), ("Total Proxies", "total_proxies_label"),
                  ("Requests/Sec", "rps_label")]):
@@ -465,14 +484,12 @@ class TrafficBotProApp(ctk.CTk):
             lbl.pack(pady=(0, 10))
             setattr(self, attr, lbl)
 
-        # Success Rate Card
         card = ctk.CTkFrame(hud_frame, fg_color="#2b2b2b")
         card.grid(row=0, column=3, padx=10, pady=5, sticky="ew")
         ctk.CTkLabel(card, text="Success Rate", font=("Roboto", 12), text_color="#999999").pack(pady=(10, 0))
         self.success_rate_label = ctk.CTkLabel(card, text="0%", font=("Roboto Medium", 24), text_color="#2CC985")
         self.success_rate_label.pack(pady=(0, 10))
 
-        # Dashboard Progress Section
         dash_prog_frame = ctk.CTkFrame(dashboard, fg_color="transparent")
         dash_prog_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 10))
 
@@ -483,7 +500,6 @@ class TrafficBotProApp(ctk.CTk):
         self.dash_progress_bar.pack(fill="x")
         self.dash_progress_bar.set(0)
 
-        # Log Console
         self.dashboard_log_console = ctk.CTkTextbox(dashboard, state="disabled", font=("Consolas", 12),
                                                     fg_color="#2b2b2b", text_color="#FFFFFF")
         self.dashboard_log_console.grid(row=2, column=0, sticky="nsew", padx=10, pady=(5, 10))
@@ -657,7 +673,7 @@ class TrafficBotProApp(ctk.CTk):
         self.clear_results_btn.grid(row=0, column=3, padx=5, sticky="ew")
 
         # FLUID GRID: Configure columns with weights
-        self.proxy_results_grid = ctk.CTkScrollableFrame(results_frame, label_text="Proxy Test Results")
+        self.proxy_results_grid = ctk.CTkFrame(results_frame, fg_color="transparent")
         self.proxy_results_grid.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 
         # Configure grid columns (7 columns) to be responsive
@@ -667,9 +683,20 @@ class TrafficBotProApp(ctk.CTk):
         # --- HEADERS ---
         headers = ["IP", "Port", "Protocol", "Country", "Status", "Ping (ms)", "Anonymity"]
         for i, header in enumerate(headers):
-            # Using sticky="ew" to make it fill the weighted column
             ctk.CTkLabel(self.proxy_results_grid, text=header, font=("Roboto Medium", 12)).grid(row=0, column=i, padx=5,
                                                                                                 pady=5, sticky="ew")
+        # --- INITIALIZE WIDGET POOL ---
+        # Create empty labels once and reuse them
+        self.grid_widgets_pool = []
+        for row in range(self.GRID_POOL_SIZE):
+            row_widgets = []
+            for col in range(7):
+                lbl = ctk.CTkLabel(self.proxy_results_grid, text="", height=20)
+                # We do NOT grid them yet or we grid them and hide them?
+                # Better to grid them and leave text empty
+                lbl.grid(row=row + 1, column=col, padx=2, pady=1, sticky="ew")
+                row_widgets.append(lbl)
+            self.grid_widgets_pool.append(row_widgets)
 
     def build_settings_frame(self):
         settings_frame = self.frames["settings"]
@@ -699,9 +726,6 @@ class TrafficBotProApp(ctk.CTk):
     def update_proxy_ui_state(self, choice):
         for widget in self.proxy_input_container.winfo_children():
             widget.pack_forget()
-        # SCRAPER: Don't hide the scraper UI, keep it visible in Manual/File/URL modes
-        # But for simplicity, we keep it in the container for now or separate?
-        # Current layout: Scraper is OUTSIDE the input container, so it stays visible.
 
         if choice == "Manual":
             self.manual_textbox.pack(fill="both", expand=True)
@@ -734,6 +758,7 @@ class TrafficBotProApp(ctk.CTk):
 
         def _update_log():
             try:
+                if not target_widget.winfo_exists(): return
                 target_widget.configure(state="normal")
                 tag_name = f"color_{level}_{time.time()}_{random.randint(0, 999)}"
                 target_widget.tag_config(tag_name, foreground=color)
@@ -795,102 +820,122 @@ class TrafficBotProApp(ctk.CTk):
             self.log_message(log, "info", "tester")
 
         if proxies:
-            # Update Manual Textbox
-            current_text = self.manual_textbox.get("1.0", "end-1c")
-            new_text = current_text + "\n" + "\n".join(proxies)
+            count = len(proxies)
+            proxies_str = "\n".join(proxies)
 
-            def _update_ui():
-                self.manual_textbox.delete("1.0", "end")
-                self.manual_textbox.insert("1.0", new_text)
-                self.proxy_source_var.set("Manual")
-                self.source_seg_btn.set("Manual")
-                self.update_proxy_ui_state("Manual")
-                self.scrape_btn.configure(state="normal", text="SCRAPE PROXIES")
-                self.is_scraping = False
+            if count > 5000:
+                save_path = "scraped_proxies.txt"
+                try:
+                    with open(save_path, "w") as f:
+                        f.write(proxies_str)
 
-            self.after(0, _update_ui)
-            self.log_message(f"Scraped {len(proxies)} unique proxies. Added to Manual list.", "success", "tester")
+                    def _update_ui_large():
+                        self.file_path_entry.delete(0, "end")
+                        self.file_path_entry.insert(0, os.path.abspath(save_path))
+                        self.proxy_source_var.set("File")
+                        self.source_seg_btn.set("File")
+                        self.update_proxy_ui_state("File")
+                        self.scrape_btn.configure(state="normal", text="SCRAPE PROXIES")
+                        self.is_scraping = False
+                        self.log_message(f"Success! {count} proxies saved to {save_path}", "success", "tester")
+                        self.log_message("Switched mode to 'File' to prevent GUI lag.", "warning", "tester")
+
+                    self.after(0, _update_ui_large)
+                except Exception as e:
+                    self.log_message(f"Error saving scrape file: {e}", "error", "tester")
+                    self.is_scraping = False
+            else:
+                def _update_ui_small():
+                    self.manual_textbox.delete("1.0", "end")
+                    self.manual_textbox.insert("1.0", proxies_str)
+                    self.proxy_source_var.set("Manual")
+                    self.source_seg_btn.set("Manual")
+                    self.update_proxy_ui_state("Manual")
+                    self.scrape_btn.configure(state="normal", text="SCRAPE PROXIES")
+                    self.is_scraping = False
+                    self.log_message(f"Scraped {count} proxies. Added to Manual list.", "success", "tester")
+
+                self.after(0, _update_ui_small)
         else:
             self.after(0, lambda: self.scrape_btn.configure(state="normal", text="SCRAPE PROXIES"))
             self.is_scraping = False
             self.log_message("No proxies found.", "warning", "tester")
 
-    # --- MAIN BOT LOGIC ---
-    def bot_task(self, task_id, url, min_time, max_time, headless_mode):
-        if not self.is_running: return
-        self.active_threads += 1
-
-        proxy_data = self.get_random_proxy()
-        user_agent = self.ua.random
-        proxy_config = None
-        proxy_log_str = "Direct Connection"
-
-        if proxy_data:
-            try:
-                target_proxy = proxy_data
-                scheme = "http"
-                if "://" in target_proxy:
-                    scheme, target_proxy = target_proxy.split("://", 1)
-
-                proxy_config = {}
-                if "@" in target_proxy:
-                    auth_part, host_part = target_proxy.split("@", 1)
-                    if ":" in auth_part:
-                        username, password = auth_part.split(":", 1)
-                        proxy_config["username"] = username
-                        proxy_config["password"] = password
-                    target_proxy = host_part
-
-                proxy_config["server"] = f"{scheme}://{target_proxy}"
-                proxy_log_str = f"Proxy ({scheme}) {target_proxy}"
-            except Exception:
-                self.log_message(f"Task {task_id}: Invalid proxy structure.", "error")
-                self.failure_count += 1
-                self.active_threads -= 1
-                self.after(0, self.update_stats)
-                return
-
+    # --- MAIN BOT LOGIC (OPTIMIZED: PERSISTENT BROWSERS) ---
+    def bot_worker_thread(self, thread_id, url, visits_per_thread, min_time, max_time, headless_mode):
+        """
+        Runs one persistent browser for multiple visits.
+        """
         try:
-            self.log_message(f"Task {task_id}: {proxy_log_str} -> {url}")
             with sync_playwright() as p:
                 browser = p.chromium.launch(
                     headless=headless_mode,
                     args=["--disable-blink-features=AutomationControlled"]
                 )
+                self.log_message(f"Thread {thread_id}: Browser launched.", "info")
 
-                context = browser.new_context(
-                    user_agent=user_agent,
-                    proxy=proxy_config,
-                    viewport={"width": random.randint(1024, 1920), "height": random.randint(768, 1080)}
-                )
+                for i in range(visits_per_thread):
+                    if not self.is_running: break
 
-                page = context.new_page()
-                page.set_default_timeout(60000)
+                    # Get Proxy
+                    proxy_data = self.get_random_proxy()
+                    user_agent = self.ua.random
+                    proxy_config = None
+                    proxy_log_str = "Direct Connection"
 
-                response = page.goto(url, wait_until="domcontentloaded")
+                    if proxy_data:
+                        try:
+                            target_proxy = proxy_data
+                            scheme = "http"
+                            if "://" in target_proxy:
+                                scheme, target_proxy = target_proxy.split("://", 1)
 
-                if response and response.status < 400:
-                    self.log_message(f"Task {task_id}: Page loaded. Browsing...", "success")
-                    view_time = random.uniform(min_time, max_time)
-                    start_time = time.time()
-                    while time.time() - start_time < view_time:
-                        if not self.is_running: break
-                        time.sleep(1)
-                    self.success_count += 1
-                else:
-                    self.log_message(f"Task {task_id}: Failed Status {response.status if response else 'ERR'}",
-                                     "warning")
-                    self.failure_count += 1
+                            proxy_config = {}
+                            if "@" in target_proxy:
+                                auth_part, host_part = target_proxy.split("@", 1)
+                                if ":" in auth_part:
+                                    username, password = auth_part.split(":", 1)
+                                    proxy_config["username"] = username
+                                    proxy_config["password"] = password
+                                target_proxy = host_part
+                            proxy_config["server"] = f"{scheme}://{target_proxy}"
+                            proxy_log_str = f"Proxy {target_proxy}"
+                        except Exception:
+                            pass  # Skip bad proxy setup
 
-                context.close()
+                    # Create Context
+                    try:
+                        context = browser.new_context(
+                            user_agent=user_agent,
+                            proxy=proxy_config,
+                            viewport={"width": random.randint(1024, 1920), "height": random.randint(768, 1080)}
+                        )
+                        page = context.new_page()
+                        page.set_default_timeout(60000)
+
+                        self.log_message(f"T{thread_id}: Visiting {url} via {proxy_log_str}")
+                        response = page.goto(url, wait_until="domcontentloaded")
+
+                        if response and response.status < 400:
+                            self.success_count += 1
+                            view_time = random.uniform(min_time, max_time)
+                            time.sleep(view_time)
+                        else:
+                            self.failure_count += 1
+
+                        context.close()
+                    except Exception as e:
+                        self.log_message(f"T{thread_id} Error: {str(e)[:40]}", "error")
+                        self.failure_count += 1
+
+                    self.active_threads = threading.active_count() - 1  # Approx
+                    self.after(0, self.update_stats)
+
                 browser.close()
+                self.log_message(f"Thread {thread_id}: Browser closed.", "info")
 
         except Exception as e:
-            self.log_message(f"Task {task_id}: Error - {str(e)[:50]}...", "error")
-            self.failure_count += 1
-        finally:
-            self.active_threads -= 1
-            self.after(0, self.update_stats)
+            self.log_message(f"Thread {thread_id} Critical Error: {e}", "error")
 
     def get_random_proxy(self):
         if self.proxy_queue.empty(): return None
@@ -935,11 +980,9 @@ class TrafficBotProApp(ctk.CTk):
             rps = total_reqs / elapsed
             self.rps_label.configure(text=f"{rps:.2f}")
 
-        # --- NEW: Success Rate Logic ---
         if total_reqs > 0:
             success_rate = (self.success_count / total_reqs) * 100
             self.success_rate_label.configure(text=f"{success_rate:.1f}%")
-        # -------------------------------
 
         self.after(500, self.monitor_dashboard)
 
@@ -952,7 +995,7 @@ class TrafficBotProApp(ctk.CTk):
         self.after(0, self.save_current_settings)
         url = self.url_entry.get()
         try:
-            threads = int(self.threads_entry.get())
+            thread_count = int(self.threads_entry.get())
             total_visits = int(self.visits_entry.get())
             min_time = float(self.min_time_entry.get())
             max_time = float(self.max_time_entry.get())
@@ -983,13 +1026,18 @@ class TrafficBotProApp(ctk.CTk):
             self.stop_process()
             return
 
-        self.log_message(f"Starting {total_visits} visits with {threads} threads...")
-        with ThreadPoolExecutor(max_workers=threads) as executor:
+        self.log_message(f"Starting {total_visits} visits with {thread_count} persistent threads...")
+
+        # Distribute work
+        visits_per_thread = math.ceil(total_visits / thread_count)
+
+        with ThreadPoolExecutor(max_workers=thread_count) as executor:
             futures = []
-            for i in range(total_visits):
+            for i in range(thread_count):
                 if not self.is_running: break
-                futures.append(executor.submit(self.bot_task, i + 1, url, min_time, max_time, headless_mode))
-                time.sleep(0.1)
+                futures.append(executor.submit(
+                    self.bot_worker_thread, i + 1, url, visits_per_thread, min_time, max_time, headless_mode
+                ))
             for f in futures:
                 if not self.is_running:
                     f.cancel()
@@ -1054,6 +1102,8 @@ class TrafficBotProApp(ctk.CTk):
         self.test_stats = {"tested": 0, "active": 0, "dead": 0}
         self.protocol_stats = {"http": 0, "https": 0, "socks4": 0, "socks5": 0}
         self.tested_proxies = []
+        # Clear buffer
+        self.proxy_results_buffer = []
         self.update_tester_stats()
         self.clear_proxy_results()
 
@@ -1081,7 +1131,8 @@ class TrafficBotProApp(ctk.CTk):
                                             self.real_ip) if auto_detect else ProxyChecker.check_proxy(
             proxy, target_url, timeout, self.real_ip)
 
-        self.after(0, lambda: self.add_proxy_result_to_grid(res))
+        # OPTIMIZATION: Don't update grid individually. Buffer it.
+        self.proxy_results_buffer.append(res)
 
         if res["status"] == "Active":
             self.tested_proxies.append(res)
@@ -1101,45 +1152,94 @@ class TrafficBotProApp(ctk.CTk):
         self.test_stats["tested"] += 1
         self.after(0, self.update_tester_stats)
 
-    def add_proxy_result_to_grid(self, result):
-        row_index = len(self.proxy_results_grid.winfo_children()) // 7 + 1
-        try:
-            ip_port = result["proxy"].split("://")[-1].split("@")[-1]
-            ip, port = ip_port.split(":")
-        except:
-            ip, port = result["proxy"], "-"
+    # --- OPTIMIZATION: BATCH UI UPDATER (RECYCLING WIDGETS) ---
+    def update_results_grid_loop(self):
+        """
+        Periodically checks the buffer and updates the UI in chunks.
+        Prevents locking the main thread.
+        """
+        if self.proxy_results_buffer:
+            # We only show the latest N items that fit in the pool
+            # Take the *newest* items from the buffer if it's overflowing
+            # Actually, to simulate a log, we insert at top or bottom?
+            # Let's just process chunks.
 
-        status_color = "#2CC985" if result["status"] == "Active" else "#e74c3c"
+            chunk = self.proxy_results_buffer[:5]  # Update 5 rows per tick
+            del self.proxy_results_buffer[:5]
 
-        # Use pycountry for proper name
-        country_code = result.get("country_code", "")
-        full_country_name, flag = ProxyChecker.get_country_data(country_code)
+            for res in chunk:
+                self.add_proxy_result_to_grid_optimized(res)
 
-        vals = [
-            ip,
-            port,
-            result.get("type", "Unknown"),
-            flag,  # Country Flag
-            result["status"],
-            str(result["speed"]) if result["status"] == "Active" else "-",
-            result["anonymity"]
-        ]
+        # Run every 50ms - faster updates, smaller chunks
+        self.after(50, self.update_results_grid_loop)
 
-        for i, val in enumerate(vals):
-            # Sticky="ew" makes the label expand to fill the weighted column
-            lbl = ctk.CTkLabel(self.proxy_results_grid, text=val)
-            if i == 4:  # Status column
-                lbl.configure(text_color=status_color)
+    def add_proxy_result_to_grid_optimized(self, result):
+        # We don't create widgets. We shift data.
+        # Implementation: We need a data structure for the view.
+        # But for simplicity in this specific "Log" view, we can:
+        # 1. Pop the last row of widgets (bottom)
+        # 2. Move it to the top (row 1)
+        # 3. Re-configure its text
+        # 4. Shift all other rows down? No, that's slow (re-grid).
 
-            # Add Tooltip for Country Flag
-            if i == 3:  # Country Column
-                CTkToolTip(lbl, text=full_country_name)
+        # Better: Just write to the NEXT available slot in the circular buffer
+        # But the user wants a scrolling list.
 
-            lbl.grid(row=row_index, column=i, padx=5, pady=2, sticky="ew")
+        # "Shift" Logic:
+        # Move internal data, then redraw?
+        # Actually, let's just stick to "Insert at Top" logic but REUSE the widgets.
+        # Un-grid the last row. Grid it at row 1. Increment everyone else's row? No.
+
+        # FASTEST: Just update the text of the existing widgets to match a "data list".
+        # We need a list of recent results.
+        if not hasattr(self, "view_data_list"):
+            self.view_data_list = []
+
+        self.view_data_list.insert(0, result)
+        if len(self.view_data_list) > self.GRID_POOL_SIZE:
+            self.view_data_list.pop()
+
+        # Now update the widgets to match view_data_list
+        for i, res in enumerate(self.view_data_list):
+            row_widgets = self.grid_widgets_pool[i]
+
+            ip_port = res["proxy"].split("://")[-1].split("@")[-1]
+            try:
+                ip, port = ip_port.split(":")
+            except:
+                ip, port = res["proxy"], "-"
+
+            country_code = res.get("country_code", "")
+            full_country_name, flag = ProxyChecker.get_country_data(country_code)
+
+            status_color = "#2CC985" if res["status"] == "Active" else "#e74c3c"
+
+            vals = [
+                ip, port, res.get("type", "Unknown"), flag,
+                res["status"], str(res["speed"]) if res["status"] == "Active" else "-",
+                res["anonymity"]
+            ]
+
+            # Update the row widgets
+            for col_idx, widget in enumerate(row_widgets):
+                widget.configure(text=vals[col_idx])
+                if col_idx == 4:  # Status
+                    widget.configure(text_color=status_color)
+                else:
+                    widget.configure(text_color="#FFFFFF")  # Reset color
+
+                if col_idx == 3:  # Country tooltip
+                    CTkToolTip(widget, text=full_country_name)
 
     def clear_proxy_results(self):
-        for widget in self.proxy_results_grid.winfo_children():
-            if widget.grid_info()["row"] > 0: widget.destroy()
+        # Clear buffer and view list
+        self.proxy_results_buffer = []
+        self.view_data_list = []
+
+        # Clear text on all widgets
+        for row in self.grid_widgets_pool:
+            for widget in row:
+                widget.configure(text="")
 
     def update_tester_stats(self):
         self.test_status_label.configure(
@@ -1153,7 +1253,6 @@ class TrafficBotProApp(ctk.CTk):
         export_dir = "proxies"
         os.makedirs(export_dir, exist_ok=True)
 
-        # Unified export for SOCKS
         grouped = {
             "http": [],
             "https": [],
@@ -1162,7 +1261,7 @@ class TrafficBotProApp(ctk.CTk):
 
         for p in self.tested_proxies:
             ptype = p.get("type", "HTTP").lower()
-            if "socks" in ptype:  # Captures socks4, socks5, socks5h etc
+            if "socks" in ptype:
                 grouped["socks"].append(p["proxy"])
             elif "https" in ptype:
                 grouped["https"].append(p["proxy"])
