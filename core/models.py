@@ -5,12 +5,14 @@ from enum import Enum
 
 class EngineMode(Enum):
     """Traffic engine mode selection."""
-    CURL = "curl"        # Fast, curl_cffi-based
+
+    CURL = "curl"  # Fast, curl_cffi-based
     BROWSER = "browser"  # Realistic, Playwright-based
 
 
 class CaptchaProvider(Enum):
     """Supported captcha solving providers."""
+
     NONE = "none"
     TWOCAPTCHA = "2captcha"
     ANTICAPTCHA = "anticaptcha"
@@ -19,21 +21,24 @@ class CaptchaProvider(Enum):
 
 class CaptchaType(Enum):
     """Types of captchas that can be solved."""
-    TURNSTILE = "turnstile"       # Cloudflare Turnstile
+
+    TURNSTILE = "turnstile"  # Cloudflare Turnstile
     RECAPTCHA_V2 = "recaptcha_v2"  # Google reCAPTCHA v2
     RECAPTCHA_V3 = "recaptcha_v3"  # Google reCAPTCHA v3
-    HCAPTCHA = "hcaptcha"          # hCaptcha
+    HCAPTCHA = "hcaptcha"  # hCaptcha
 
 
 class BrowserSelection(Enum):
     """Browser selection options."""
-    AUTO = "auto"      # Auto-detect best available
+
+    AUTO = "auto"  # Auto-detect best available
     CHROME = "chrome"
     CHROMIUM = "chromium"  # Open-source Chromium (including Playwright bundled)
     EDGE = "edge"
     BRAVE = "brave"
     FIREFOX = "firefox"
-    OTHER = "other"    # Custom path
+    OTHER = "other"  # Custom path
+
 
 @dataclass
 class ProxyConfig:
@@ -46,12 +51,18 @@ class ProxyConfig:
 
     def to_curl_cffi_format(self) -> str:
         """Returns proxy string formatted for curl_cffi."""
-        auth = f"{self.username}:{self.password}@" if self.username and self.password else ""
+        auth = (
+            f"{self.username}:{self.password}@"
+            if self.username and self.password
+            else ""
+        )
         return f"{self.protocol}://{auth}{self.host}:{self.port}"
+
 
 @dataclass
 class BrowserConfig:
     """Configuration for browser-based traffic generation."""
+
     # Browser selection and paths
     selected_browser: BrowserSelection = BrowserSelection.AUTO
     chrome_path: str = ""
@@ -68,6 +79,10 @@ class BrowserConfig:
     locale: str = "en-US"
     timezone: str = "America/New_York"
     stealth_enabled: bool = True  # Anti-detection scripts
+    # Fingerprint rotation - simulates user closing/reopening browser
+    fingerprint_rotation_enabled: bool = True
+    fingerprint_rotation_requests: int = 50  # Rotate after N requests per context
+    fingerprint_rotation_minutes: int = 30  # Or rotate after M minutes
 
     def get_executable_path(self) -> Optional[str]:
         """Get the executable path based on selection."""
@@ -90,6 +105,7 @@ class BrowserConfig:
 @dataclass
 class CaptchaConfig:
     """Configuration for captcha solving services with multi-provider support."""
+
     # API keys for each provider
     twocaptcha_key: str = ""
     anticaptcha_key: str = ""
@@ -115,6 +131,7 @@ class CaptchaConfig:
 @dataclass
 class ProtectionBypassConfig:
     """Settings for bypassing bot protection systems."""
+
     cloudflare_enabled: bool = True
     cloudflare_wait_seconds: int = 10  # Wait for JS challenge
     akamai_enabled: bool = True
@@ -124,6 +141,7 @@ class ProtectionBypassConfig:
 @dataclass
 class TrafficConfig:
     """Configuration for traffic generation."""
+
     target_url: str
     max_threads: int
     total_visits: int
@@ -136,10 +154,17 @@ class TrafficConfig:
     browser: BrowserConfig = field(default_factory=BrowserConfig)
     captcha: CaptchaConfig = field(default_factory=CaptchaConfig)
     protection: ProtectionBypassConfig = field(default_factory=ProtectionBypassConfig)
+    # Traffic pattern settings - burst/sleep for realistic traffic
+    burst_mode: bool = False  # Enable burst mode
+    burst_requests: int = 10  # Number of requests per burst
+    burst_sleep_min: float = 2.0  # Min sleep between bursts (seconds)
+    burst_sleep_max: float = 5.0  # Max sleep between bursts (seconds)
+
 
 @dataclass
 class TrafficStats:
     """Traffic generation statistics with browser and captcha tracking."""
+
     # Core stats
     success: int = 0
     failed: int = 0
@@ -169,6 +194,7 @@ class TrafficStats:
     # Last protection event for display
     last_protection_event: str = ""  # e.g., "Cloudflare bypassed", "Solving captcha..."
 
+
 @dataclass
 class ProxyCheckResult:
     proxy: ProxyConfig
@@ -181,4 +207,3 @@ class ProxyCheckResult:
     anonymity: str = "Unknown"  # "Elite", "Anonymous", "Transparent"
     score: float = 0.0
     bytes_transferred: int = 0  # Total bytes (request + response + TLS overhead)
-

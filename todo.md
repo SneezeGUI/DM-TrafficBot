@@ -1,5 +1,56 @@
 # Project To-Do & Recommendations
 
+## Completed (v3.6.0+)
+
+### UI/UX Improvements (2025-12-17)
+- [x] **Clear Dead button** - Remove dead proxies without clearing active ones
+- [x] **Activity log auto-scroll** - Minimum height, thread-safe logging, reliable scroll behavior
+- [x] **Adjustable column widths** - Proxy list columns resizable by dragging header edges
+- [x] **Pinned progress bar** - Progress bar stays visible, no more layout jumping
+- [x] **Unique proxy per thread** - Traffic engine assigns unique proxies to concurrent tasks
+
+### Browser Fingerprint (2025-12-17)
+- [x] **OS Emulation profiles** - 6 profiles (Win/Mac/Linux × Chrome/Firefox/Safari/Edge)
+- [x] **Fingerprint uniqueness** - Canvas, AudioContext, ClientRect, performance.now() noise per session
+- [x] **Fingerprint rotation** - Auto-rotate after 50 requests or 30 minutes (configurable)
+- [x] **Engine activity logging** - Browser/curl engine events now show in GUI activity log
+
+### Cloudflare Bypass Improvements (2025-12-17)
+- [x] **Enhanced detection markers** - 20+ markers with confidence scoring and title matching
+- [x] **Multi-stage bypass strategy** - 4-stage approach: JS wait, human simulation, checkbox click, API solve
+- [x] **Cookie-based verification** - cf_clearance cookie + content analysis for reliable success detection
+- [x] **Turnstile iframe handling** - Extracts sitekey from iframes, attempts checkbox clicks
+- [x] **Human behavior simulation** - Mouse movements, scrolling, randomized click offsets
+- [x] **Detailed bypass logging** - Stage-by-stage progress with timing in activity log
+- [x] **Double verification** - Post-bypass verification before counting as success
+
+### Export System (2025-12-17)
+- [x] **Folder selection dialog** - Prompts for export folder if not set in settings
+- [x] **Category export buttons** - All, HTTP, HTTPS, SOCKS buttons (color-coded)
+- [x] **Protocol toggle** - Checkbox to include/exclude protocol prefix (http://, socks5://)
+
+### Bug Fixes (2025-12-17)
+- [x] **Request/Success counter mismatch** - Moved `total_requests++` to start of request (guarantees req >= success+failed)
+- [x] **Success count accuracy** - Double-verification after CF bypass before counting
+- [x] **CaptchaProvider enum error** - Fixed `get_available_providers()` to return strings instead of enum objects
+
+### New Features (2025-12-20)
+- [x] **Protocol color coding** - HTTP (blue), HTTPS (purple), SOCKS4 (dark teal), SOCKS5 (teal) in proxy list
+- [x] **Configurable referers** - Load from `resources/referers.txt` with fallback to defaults
+- [x] **Traffic pattern randomization** - Burst mode with configurable requests per burst and sleep intervals
+- [x] **Responsive UI** - Scrollable config areas for small screens (960x540), minsize 800x500
+- [x] **DPI Scaling** - Scale-aware UI elements (sidebar, buttons, fonts, grid rows) for high-DPI displays
+- [x] **Draggable activity log** - Resizable panels via DraggableSash component (Dashboard & Stress Test)
+- [x] **Two-phase proxy checking** - Only check validators after proxy confirmed alive (saves bandwidth)
+
+### Bug Fixes (2025-12-20)
+- [x] **Export button scaling** - Fixed export proxy buttons not scaling with DPI
+- [x] **VirtualGrid column resize** - Fixed header/content misalignment when resizing columns
+- [x] **CTk place() limitation** - Fixed ValueError by using configure() for widget dimensions
+- [x] **GeoIP fallbacks** - Improved fallback chain and increased API timeouts
+
+---
+
 ## Completed (v3.4.0)
 
 ### Multi-Validator Anonymity System
@@ -41,18 +92,22 @@
 ## Backlog
 
 ### Codebase Structure & Quality
+- [ ] **Split ui/app.py:** Break monolithic app.py into smaller component modules
 - [ ] **Standardize Testing:** Move `resources/tests` to a top-level `tests/` directory and integrate `pytest`
 - [ ] **Linting & Formatting:** Create `dev-requirements.txt` (black, pylint) for code style enforcement
 - [ ] **Unit tests for validation functions**
 
 ### Traffic Realism Features
-- [ ] **Configurable Referers:** Externalize referers to `resources/referers.txt` or UI setting
+- [x] **Traffic pattern randomization:** Burst/sleep patterns for more realistic traffic profiles *(v3.6.1)*
+- [x] **Configurable Referers:** Externalize referers to `resources/referers.txt` *(v3.6.1)*
+- [ ] **Session cookie persistence:** Maintain cookies across runs for session continuity
 - [ ] **Scenario Mode:** Visit profiles that hit target, wait, then visit sub-pages
 
 ### Proxy Management
+- [x] **Protocol color coding:** Color code protocol category in proxy checker results *(v3.6.1)*
 - [ ] **Source Health Tracking:** Track success rates of URLs in `sources.txt`, auto-disable dead sources
 - [ ] **Auto-Update Sources:** Fetch fresh `sources.txt` from remote repository
-
+- [ ] **Center Value/Text** center value/text in each resizable results column for proxy manager
 ### User Interface & Logging
 - [ ] **File-Based Logging:** Optional file logging with rotation for debugging long sessions
 - [ ] **Session Export:** Export session statistics (Success/Fail/Proxy Count) to CSV/JSON
@@ -68,8 +123,9 @@
 
 ---
 
-## Extra Notes
+## Historical Notes (Completed)
 - [x] ~~Notification when proxy scraping finished~~ - Added popup notification
 - [x] ~~Make UI elements dynamically scalable~~ - Grid layout implemented
-- [ ] Optional file-based logging with rotation
-- [ ] Additional proxy source management features
+- [x] ~~Setup Proper OS Emulation/Spoofing~~ - OS profiles with consistent navigator properties, Client Hints, WebGL spoofing
+- [x] ~~Export folder selection~~ - Prompts for folder selection, saves to settings
+- [x] ~~Category export buttons~~ - Export buttons: All, HTTP, HTTPS, SOCKS with protocol toggle

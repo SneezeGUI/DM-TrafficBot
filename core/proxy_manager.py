@@ -14,8 +14,11 @@ from .constants import (
     DEAD_PROXY_SPEED_MS,
 )
 from .validators import (
-    DEFAULT_VALIDATORS, Validator, ValidatorResult,
-    aggregate_results, AggregatedResult
+    DEFAULT_VALIDATORS,
+    Validator,
+    ValidatorResult,
+    aggregate_results,
+    AggregatedResult,
 )
 
 # GeoIP cache to avoid repeated lookups
@@ -40,8 +43,14 @@ def _init_geoip_reader():
 
     # Try to find the database file
     db_paths = [
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "GeoLite2-City.mmdb"),
-        os.path.join(os.path.dirname(__file__), "..", "resources", "GeoLite2-City.mmdb"),
+        os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "resources",
+            "GeoLite2-City.mmdb",
+        ),
+        os.path.join(
+            os.path.dirname(__file__), "..", "resources", "GeoLite2-City.mmdb"
+        ),
         "resources/GeoLite2-City.mmdb",
         "GeoLite2-City.mmdb",
     ]
@@ -58,11 +67,14 @@ def _init_geoip_reader():
 
     try:
         import geoip2.database
+
         _geoip_reader = geoip2.database.Reader(db_path)
         logging.info(f"GeoLite2-City database loaded from {db_path}")
         return _geoip_reader
     except ImportError:
-        logging.warning("geoip2 package not installed, will use API fallback. Run: pip install geoip2")
+        logging.warning(
+            "geoip2 package not installed, will use API fallback. Run: pip install geoip2"
+        )
         return None
     except Exception as e:
         logging.warning(f"Failed to load GeoLite2 database: {e}")
@@ -83,10 +95,11 @@ def _lookup_geoip_local(ip: str) -> Optional[dict]:
         return {
             "country": response.country.name or "Unknown",
             "countryCode": response.country.iso_code or "??",
-            "city": response.city.name or ""
+            "city": response.city.name or "",
         }
-    except Exception:
-        # IP not found in database or other error
+    except Exception as e:
+        # IP not found in database or other error (e.g., private IP ranges)
+        logging.debug(f"GeoIP local lookup failed for {ip}: {type(e).__name__}")
         return None
 
 
@@ -98,58 +111,85 @@ def _lookup_geoip_api(ip: str) -> dict:
     """
     default = {"country": "Unknown", "countryCode": "??", "city": ""}
 
-    # API 1: ip-api.com (free, 45 req/min)
+    # Validate IP format (basic check)
+    if not ip or ip in ("0.0.0.0", "127.0.0.1", "localhost"):
+        return default
+
+    # API 1: ip-api.com (free, 45 req/min) - HTTP only, fast
     try:
         resp = std_requests.get(
             f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,city",
-            timeout=3
+            timeout=5,
         )
         if resp.status_code == 200:
             data = resp.json()
             if data.get("status") == "success":
+                logging.debug(
+                    f"GeoIP ip-api.com success for {ip}: {data.get('country')}"
+                )
                 return {
                     "country": data.get("country", "Unknown"),
                     "countryCode": data.get("countryCode", "??"),
-                    "city": data.get("city", "")
+                    "city": data.get("city", ""),
                 }
+            else:
+                logging.debug(
+                    f"GeoIP ip-api.com returned status: {data.get('status')} for {ip}"
+                )
+        else:
+            logging.debug(f"GeoIP ip-api.com HTTP {resp.status_code} for {ip}")
     except Exception as e:
-        logging.debug(f"GeoIP ip-api.com failed for {ip}: {e}")
+        logging.debug(f"GeoIP ip-api.com failed for {ip}: {type(e).__name__}: {e}")
 
     # API 2: ipapi.co (free, 1000 req/day)
     try:
         resp = std_requests.get(
             f"https://ipapi.co/{ip}/json/",
-            timeout=3,
-            headers={"User-Agent": "Mozilla/5.0"}
+            timeout=5,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"
+            },
         )
         if resp.status_code == 200:
             data = resp.json()
             if not data.get("error"):
+                logging.debug(
+                    f"GeoIP ipapi.co success for {ip}: {data.get('country_name')}"
+                )
                 return {
                     "country": data.get("country_name", "Unknown"),
                     "countryCode": data.get("country_code", "??"),
-                    "city": data.get("city", "")
+                    "city": data.get("city", ""),
                 }
+            else:
+                logging.debug(f"GeoIP ipapi.co error: {data.get('reason')} for {ip}")
+        else:
+            logging.debug(f"GeoIP ipapi.co HTTP {resp.status_code} for {ip}")
     except Exception as e:
-        logging.debug(f"GeoIP ipapi.co failed for {ip}: {e}")
+        logging.debug(f"GeoIP ipapi.co failed for {ip}: {type(e).__name__}: {e}")
 
-    # API 3: ipwhois.io (free, 10000 req/month)
+    # API 3: ipwhois.app (free, 10000 req/month)
     try:
-        resp = std_requests.get(
-            f"https://ipwhois.app/json/{ip}",
-            timeout=3
-        )
+        resp = std_requests.get(f"https://ipwhois.app/json/{ip}", timeout=5)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success", True):  # ipwhois returns success=false on error
+                logging.debug(
+                    f"GeoIP ipwhois.app success for {ip}: {data.get('country')}"
+                )
                 return {
                     "country": data.get("country", "Unknown"),
                     "countryCode": data.get("country_code", "??"),
-                    "city": data.get("city", "")
+                    "city": data.get("city", ""),
                 }
+            else:
+                logging.debug(f"GeoIP ipwhois.app returned success=false for {ip}")
+        else:
+            logging.debug(f"GeoIP ipwhois.app HTTP {resp.status_code} for {ip}")
     except Exception as e:
-        logging.debug(f"GeoIP ipwhois.app failed for {ip}: {e}")
+        logging.debug(f"GeoIP ipwhois.app failed for {ip}: {type(e).__name__}: {e}")
 
+    logging.warning(f"All GeoIP APIs failed for {ip}")
     return default
 
 
@@ -172,8 +212,11 @@ def lookup_geoip(ip: str) -> dict:
     # Try local database first (fast, no rate limit)
     result = _lookup_geoip_local(ip)
 
-    # Fall back to API if local lookup failed
-    if result is None:
+    if result:
+        logging.debug(f"GeoIP local DB success for {ip}: {result.get('country')}")
+    else:
+        # Fall back to API if local lookup failed
+        logging.debug(f"GeoIP local DB miss for {ip}, trying API fallback")
         result = _lookup_geoip_api(ip)
 
     _geoip_cache[ip] = result
@@ -227,7 +270,7 @@ def detect_anonymity(response_data: dict, real_ip: str, proxy_ip: str) -> str:
         "Client-Ip",
         "Forwarded",
         "Cf-Connecting-Ip",
-        "True-Client-Ip"
+        "True-Client-Ip",
     ]
 
     for header in ip_exposing_headers:
@@ -247,7 +290,7 @@ def detect_anonymity(response_data: dict, real_ip: str, proxy_ip: str) -> str:
         "Proxy-Connection",
         "X-Bluecoat-Via",
         "Proxy-Authenticate",
-        "Proxy-Authorization"
+        "Proxy-Authorization",
     ]
 
     for header in proxy_revealing_headers:
@@ -265,40 +308,51 @@ class ThreadedProxyManager:
     def __init__(self):
         self.regex_pattern = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}\b")
 
-    def scrape(self, sources: List[str], protocols: List[str], max_threads: int = 20, scraper_proxy: str = None, on_progress: Callable[[int], None] = None) -> List[ProxyConfig]:
+    def scrape(
+        self,
+        sources: List[str],
+        protocols: List[str],
+        max_threads: int = 20,
+        scraper_proxy: str = None,
+        on_progress: Callable[[int], None] = None,
+    ) -> List[ProxyConfig]:
         """Scrapes proxies from provided source URLs using threads."""
         found_proxies: Set[tuple] = set()
-        
+
         def fetch_source(url: str):
             try:
                 # Use standard requests for speed (scraping text/html usually doesn't need TLS fingerprinting)
                 # But we use rotating headers to avoid 403s
                 h = HeaderManager.get_random_headers()
-                proxies = {"http": scraper_proxy, "https": scraper_proxy} if scraper_proxy else None
-                
+                proxies = (
+                    {"http": scraper_proxy, "https": scraper_proxy}
+                    if scraper_proxy
+                    else None
+                )
+
                 response = std_requests.get(
-                    url,
-                    timeout=SCRAPE_TIMEOUT_SECONDS,
-                    headers=h,
-                    proxies=proxies
+                    url, timeout=SCRAPE_TIMEOUT_SECONDS, headers=h, proxies=proxies
                 )
                 if response.status_code == 200:
                     if on_progress:
                         on_progress(len(response.content))
                     matches = self.regex_pattern.findall(response.text)
-                    
+
                     # Smart Protocol Detection
                     u_lower = url.lower()
                     source_protos = []
-                    
+
                     # Heuristics based on URL hints
-                    if "socks5" in u_lower: source_protos.append("socks5")
-                    if "socks4" in u_lower: source_protos.append("socks4")
-                    if "http" in u_lower and "socks" not in u_lower: source_protos.append("http")
-                    
+                    if "socks5" in u_lower:
+                        source_protos.append("socks5")
+                    if "socks4" in u_lower:
+                        source_protos.append("socks4")
+                    if "http" in u_lower and "socks" not in u_lower:
+                        source_protos.append("http")
+
                     # Intersect with user requests
                     valid_protos = [p for p in source_protos if p in protocols]
-                    
+
                     # Fallback: If no specific protocol detected, try all requested
                     if not valid_protos:
                         valid_protos = protocols
@@ -311,26 +365,36 @@ class ThreadedProxyManager:
                 logging.debug(f"Error scraping {url}: {e}")
 
         with ThreadPoolExecutor(max_workers=max_threads) as ex:
-             ex.map(fetch_source, [url for url in sources if url.strip() and not url.startswith("#")])
+            ex.map(
+                fetch_source,
+                [url for url in sources if url.strip() and not url.startswith("#")],
+            )
 
         results = []
         for ip, port, proto in found_proxies:
             results.append(ProxyConfig(host=ip, port=port, protocol=proto))
-                
+
         return results
 
-    def check_proxies(self, proxies: List[ProxyConfig], target_url: str, timeout_ms: int, real_ip: str,
-                          on_progress: Callable[[ProxyCheckResult, int, int], None], concurrency: int = 100,
-                          pause_checker: Optional[Callable[[], bool]] = None,
-                          validators: Optional[List[Validator]] = None,
-                          test_depth: str = "quick") -> List[ProxyCheckResult]:
+    def check_proxies(
+        self,
+        proxies: List[ProxyConfig],
+        target_url: str,
+        timeout_ms: int,
+        real_ip: str,
+        on_progress: Callable[[ProxyCheckResult, int, int], None],
+        concurrency: int = 100,
+        pause_checker: Optional[Callable[[], bool]] = None,
+        validators: Optional[List[Validator]] = None,
+        test_depth: str = "quick",
+    ) -> List[ProxyCheckResult]:
         """
         Checks a list of proxies concurrently using threads.
         """
         total = len(proxies)
         completed = 0
         valid_results = []
-        lock = logging.threading.Lock() # Simple lock for counter
+        lock = logging.threading.Lock()  # Simple lock for counter
 
         # Determine which validators to use based on test_depth
         active_validators = []
@@ -351,7 +415,9 @@ class ThreadedProxyManager:
                 while pause_checker():
                     time.sleep(0.5)
 
-            result = self._test_proxy(proxy, target_url, timeout_ms, real_ip, active_validators)
+            result = self._test_proxy(
+                proxy, target_url, timeout_ms, real_ip, active_validators
+            )
 
             with lock:
                 completed += 1
@@ -371,11 +437,13 @@ class ThreadedProxyManager:
             # Scale batch size with concurrency (min 50, max 500, ~10% of threads)
             batch_size = max(PROXY_CHECK_BATCH_SIZE, min(500, concurrency // 10))
             # Reduce sleep for high concurrency
-            batch_sleep = 0.05 if concurrency <= 500 else 0.02 if concurrency <= 2000 else 0.01
+            batch_sleep = (
+                0.05 if concurrency <= 500 else 0.02 if concurrency <= 2000 else 0.01
+            )
 
             # Staggered Launch to prevent UI freeze
             for i in range(0, len(proxies), batch_size):
-                batch = proxies[i:i + batch_size]
+                batch = proxies[i : i + batch_size]
                 for p in batch:
                     futures.append(ex.submit(check_single, p))
 
@@ -394,8 +462,13 @@ class ThreadedProxyManager:
 
         return valid_results_list
 
-    def _test_proxy(self, proxy: ProxyConfig, target_url: str, timeout_ms: int, real_ip: str,
-                    validators: Optional[List[Validator]] = None) -> ProxyCheckResult:
+    def _test_proxy_alive(
+        self, proxy: ProxyConfig, target_url: str, timeout_ms: int
+    ) -> ProxyCheckResult:
+        """
+        Phase 1: Quick alive check - tests connectivity, speed, type, and GeoIP.
+        Does NOT run validator API checks (saves bandwidth for dead proxies).
+        """
         result = ProxyCheckResult(
             proxy=proxy,
             status="Dead",
@@ -403,140 +476,213 @@ class ThreadedProxyManager:
             type=proxy.protocol.upper(),
             country="Unknown",
             country_code="??",
-            city=""
+            city="",
+            anonymity="Unknown",  # Will be set in phase 2
         )
 
         proxy_url = proxy.to_curl_cffi_format()
         proxies_dict = {"http": proxy_url, "https": proxy_url}
-        timeout_sec = max(timeout_ms / 1000, 1.0)  # Minimum 1 second timeout
+        timeout_sec = max(timeout_ms / 1000, 1.0)
 
-        # Track bytes transferred for bandwidth calculation
         bytes_transferred = 0
         is_https = target_url.lower().startswith("https://")
 
         start_time = time.time()
         try:
-            # Synchronous Session - don't pass proxies to constructor, pass to request
             with requests.Session(impersonate="chrome120") as session:
                 resp = session.get(
-                    target_url,
-                    timeout=timeout_sec,
-                    proxies=proxies_dict,
-                    verify=False  # Many proxy test endpoints have cert issues
+                    target_url, timeout=timeout_sec, proxies=proxies_dict, verify=False
                 )
 
                 latency = int((time.time() - start_time) * 1000)
                 result.speed = latency
                 result.status = "Active"
 
-                # Calculate bytes transferred:
-                # - Request: ~500 bytes (method + URL + headers)
-                # - Response headers: ~300 bytes typical
-                # - Response body: actual content length
-                # - TLS handshake: ~5KB for HTTPS (client hello, server hello, certs, key exchange)
-                # - Proxy CONNECT overhead: ~200 bytes for HTTPS through proxy
+                # Calculate bytes transferred
                 request_overhead = 500
                 response_headers = 300
                 response_body = len(resp.content) if resp.content else 0
                 tls_overhead = 5000 if is_https else 0
                 proxy_connect = 200 if is_https else 0
+                bytes_transferred = (
+                    request_overhead
+                    + response_headers
+                    + response_body
+                    + tls_overhead
+                    + proxy_connect
+                )
 
-                bytes_transferred = request_overhead + response_headers + response_body + tls_overhead + proxy_connect
-
-                # If target was HTTPS and it worked, label as HTTPS proxy
+                # Type detection
                 if is_https and result.type == "HTTP":
                     result.type = "HTTPS"
 
-                # HTTPS tunneling test for HTTP proxies that weren't tested with HTTPS
-                # This is critical because browser mode requires HTTPS tunneling
+                # HTTPS tunneling test for HTTP proxies
                 if not is_https and result.type == "HTTP":
-                    https_capable = self._test_https_tunnel(session, proxies_dict, timeout_sec)
+                    https_capable = self._test_https_tunnel(
+                        session, proxies_dict, timeout_sec
+                    )
                     if https_capable:
                         result.type = "HTTPS"
-                        bytes_transferred += 2000  # HTTPS test overhead
-                        logging.debug(f"Proxy {proxy.host}:{proxy.port} upgraded to HTTPS (tunnel test passed)")
-                    else:
-                        # Mark as HTTP-only - won't work for HTTPS sites in browser mode
-                        logging.debug(f"Proxy {proxy.host}:{proxy.port} is HTTP-only (HTTPS tunnel failed)")
+                        bytes_transferred += 2000
+                        logging.debug(
+                            f"Proxy {proxy.host}:{proxy.port} upgraded to HTTPS (tunnel test passed)"
+                        )
 
-                # Get proxy's exit IP for GeoIP lookup
+                # Extract exit IP for GeoIP
                 proxy_exit_ip = None
-                response_data = {}
-
                 try:
                     response_data = resp.json()
-                    # Extract origin IP from httpbin-like response
                     origin = response_data.get("origin", "")
                     if origin:
-                        # Origin might be "ip1, ip2" format - take first
                         proxy_exit_ip = origin.split(",")[0].strip()
-                except (ValueError, KeyError, AttributeError):
-                    pass
+                        logging.debug(
+                            f"Proxy {proxy.host}:{proxy.port} exit IP: {proxy_exit_ip}"
+                        )
+                except (ValueError, KeyError, AttributeError) as e:
+                    logging.debug(f"Failed to extract exit IP from response: {e}")
 
-                # GeoIP lookup for country/city
-                if proxy_exit_ip:
-                    geo = lookup_geoip(proxy_exit_ip)
+                # GeoIP lookup - try exit IP first, fallback to proxy host IP
+                lookup_ip = proxy_exit_ip or proxy.host
+                if lookup_ip:
+                    geo = lookup_geoip(lookup_ip)
                     result.country = geo.get("country", "Unknown")
                     result.country_code = geo.get("countryCode", "??")
                     result.city = geo.get("city", "")
+                    if result.country == "Unknown":
+                        logging.debug(f"GeoIP lookup failed for {lookup_ip}")
 
-                # Multi-validator anonymity detection
+                # Store exit IP for phase 2 validator checks
+                result._exit_ip = proxy_exit_ip
+
+                result.bytes_transferred = bytes_transferred
+
+                # Base score (will be adjusted in phase 2 with anonymity factor)
+                result.score = round(1000.0 / max(latency, 1), 2)
+                proxy.score = result.score
+
+        except Exception as e:
+            logging.debug(
+                f"Proxy {proxy.host}:{proxy.port} failed: {type(e).__name__}: {e}"
+            )
+            result.bytes_transferred = 1500 if is_https else 500
+
+        return result
+
+    def _test_proxy_anonymity(
+        self,
+        result: ProxyCheckResult,
+        real_ip: str,
+        timeout_ms: int,
+        validators: List[Validator],
+    ) -> ProxyCheckResult:
+        """
+        Phase 2: Anonymity check - runs validator API checks on confirmed-alive proxies.
+        Only called for proxies that passed the alive check.
+        """
+        if result.status != "Active":
+            return result
+
+        proxy = result.proxy
+        proxy_url = proxy.to_curl_cffi_format()
+        proxies_dict = {"http": proxy_url, "https": proxy_url}
+        timeout_sec = max(timeout_ms / 1000, 1.0)
+
+        proxy_exit_ip = getattr(result, "_exit_ip", None)
+        bytes_transferred = result.bytes_transferred
+
+        try:
+            with requests.Session(impersonate="chrome120") as session:
                 if validators and len(validators) > 0:
                     # Run multi-validator test
                     validator_results, validator_bytes = self._run_validators(
                         session, proxy, proxies_dict, validators, timeout_sec, real_ip
                     )
                     bytes_transferred += validator_bytes
-                    # Pass proxy_exit_ip and proxy_worked for better fallback handling
+
                     aggregated = aggregate_results(
-                        validator_results, real_ip,
+                        validator_results,
+                        real_ip,
                         proxy_exit_ip=proxy_exit_ip or "",
-                        proxy_worked=True  # We're in the success path
+                        proxy_worked=True,
                     )
                     result.anonymity = aggregated.anonymity_level
-                    # Store score from aggregation (0-100)
                     anon_score_factor = max(0.5, aggregated.anonymity_score / 100.0)
-                elif response_data:
-                    # Fallback to simple detection
-                    result.anonymity = detect_anonymity(response_data, real_ip, proxy_exit_ip or proxy.host)
-                    anon_score_factor = {"Elite": 1.5, "Anonymous": 1.0, "Transparent": 0.5}.get(result.anonymity, 0.8)
                 else:
-                    # No validators and no response data - use IP comparison fallback
+                    # Fallback to simple detection using IP comparison
                     if proxy_exit_ip and real_ip:
                         if proxy_exit_ip == real_ip:
                             result.anonymity = "Transparent"
                             anon_score_factor = 0.5
                         else:
-                            # Different IP = at least Anonymous
                             result.anonymity = "Anonymous"
                             anon_score_factor = 1.0
                     else:
-                        # Proxy worked but no IP data - assume Anonymous as safe default
                         result.anonymity = "Anonymous"
                         anon_score_factor = 0.8
 
-                # Store bytes transferred
+                # Update bytes and score with anonymity factor
                 result.bytes_transferred = bytes_transferred
-
-                # Score Calculation
-                # Higher is better. 1000ms = 1.0. 100ms = 10.0.
-                base_score = 1000.0 / max(latency, 1)
-                base_score *= anon_score_factor
-
-                result.score = round(base_score, 2)
-                proxy.score = result.score  # Store on config for Engine use
+                base_score = 1000.0 / max(result.speed, 1)
+                result.score = round(base_score * anon_score_factor, 2)
+                proxy.score = result.score
 
         except Exception as e:
-            # Log failed proxies at debug level for troubleshooting
-            logging.debug(f"Proxy {proxy.host}:{proxy.port} failed: {type(e).__name__}: {e}")
-            # Even failed attempts use some bandwidth (connection attempt + TLS hello)
-            result.bytes_transferred = 1500 if is_https else 500
+            logging.debug(
+                f"Anonymity check failed for {proxy.host}:{proxy.port}: {type(e).__name__}: {e}"
+            )
+            # Keep the proxy as Active but with Unknown anonymity
+            result.anonymity = "Unknown"
 
         return result
 
-    def _run_validators(self, session, proxy: ProxyConfig, proxies_dict: dict,
-                        validators: List[Validator], timeout_sec: float,
-                        real_ip: str) -> tuple:
+    def _test_proxy(
+        self,
+        proxy: ProxyConfig,
+        target_url: str,
+        timeout_ms: int,
+        real_ip: str,
+        validators: Optional[List[Validator]] = None,
+    ) -> ProxyCheckResult:
+        """
+        Full proxy test: Phase 1 (alive) + Phase 2 (anonymity) combined.
+        Validators only run if proxy passes alive check.
+        """
+        # Phase 1: Quick alive check
+        result = self._test_proxy_alive(proxy, target_url, timeout_ms)
+
+        # Phase 2: Only check anonymity if proxy is alive
+        if result.status == "Active" and validators:
+            result = self._test_proxy_anonymity(result, real_ip, timeout_ms, validators)
+        elif result.status == "Active":
+            # No validators - use simple anonymity detection
+            proxy_exit_ip = getattr(result, "_exit_ip", None)
+            if proxy_exit_ip and real_ip:
+                if proxy_exit_ip == real_ip:
+                    result.anonymity = "Transparent"
+                    anon_score_factor = 0.5
+                else:
+                    result.anonymity = "Anonymous"
+                    anon_score_factor = 1.0
+            else:
+                result.anonymity = "Anonymous"
+                anon_score_factor = 0.8
+
+            # Adjust score with anonymity factor
+            base_score = 1000.0 / max(result.speed, 1)
+            result.score = round(base_score * anon_score_factor, 2)
+            proxy.score = result.score
+
+        return result
+
+    def _run_validators(
+        self,
+        session,
+        proxy: ProxyConfig,
+        proxies_dict: dict,
+        validators: List[Validator],
+        timeout_sec: float,
+        real_ip: str,
+    ) -> tuple:
         """
         Run multiple validators against a proxy and collect results.
         Returns (List[ValidatorResult], total_bytes_transferred)
@@ -552,7 +698,7 @@ class ThreadedProxyManager:
                     validator.url,
                     timeout=min(timeout_sec, validator.timeout),
                     proxies=proxies_dict,
-                    verify=False
+                    verify=False,
                 )
                 elapsed_ms = int((time.time() - start) * 1000)
 
@@ -562,8 +708,12 @@ class ThreadedProxyManager:
                 response_body = len(resp.content) if resp.content else 0
                 # TLS overhead only for first HTTPS request in session (session reuse)
                 # Subsequent HTTPS requests reuse connection, so minimal TLS overhead
-                tls_overhead = 500 if is_https else 0  # Session reuse = smaller overhead
-                total_bytes += request_overhead + response_headers + response_body + tls_overhead
+                tls_overhead = (
+                    500 if is_https else 0
+                )  # Session reuse = smaller overhead
+                total_bytes += (
+                    request_overhead + response_headers + response_body + tls_overhead
+                )
 
                 vr = validator.parse_response(resp.text, resp.status_code, real_ip)
                 vr.response_time_ms = elapsed_ms
@@ -571,17 +721,19 @@ class ThreadedProxyManager:
 
             except Exception as e:
                 # Validator failed - record failure
-                results.append(ValidatorResult(
-                    validator_name=validator.name,
-                    success=False,
-                    error=str(e)
-                ))
+                results.append(
+                    ValidatorResult(
+                        validator_name=validator.name, success=False, error=str(e)
+                    )
+                )
                 # Failed request still used some bandwidth
                 total_bytes += 800 if is_https else 300
 
         return results, total_bytes
 
-    def _test_https_tunnel(self, session, proxies_dict: dict, timeout_sec: float) -> bool:
+    def _test_https_tunnel(
+        self, session, proxies_dict: dict, timeout_sec: float
+    ) -> bool:
         """
         Test if an HTTP proxy can tunnel HTTPS traffic (CONNECT method).
 
@@ -606,7 +758,7 @@ class ThreadedProxyManager:
                     test_url,
                     timeout=min(timeout_sec, 5.0),  # Max 5s for quick test
                     proxies=proxies_dict,
-                    verify=False
+                    verify=False,
                 )
                 if resp.status_code == 200:
                     return True

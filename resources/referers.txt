@@ -1,0 +1,29 @@
+# Referer URLs for traffic diversity
+# Add one URL per line. Lines starting with # are ignored.
+# These URLs simulate different traffic sources (search engines, social media, etc.)
+
+# Search Engines
+https://www.google.com/
+https://www.google.co.uk/
+https://www.google.ca/
+https://www.google.com.au/
+https://www.bing.com/
+https://duckduckgo.com/
+https://search.yahoo.com/
+https://www.ecosia.org/
+https://www.startpage.com/
+
+# Social Media
+https://www.facebook.com/
+https://twitter.com/
+https://www.reddit.com/
+https://www.linkedin.com/
+https://www.pinterest.com/
+
+# Direct (no referer simulation)
+https://t.co/
+https://l.facebook.com/
+
+# News & Content
+https://news.ycombinator.com/
+https://www.medium.com/

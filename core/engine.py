@@ -7,7 +7,7 @@ from .models import TrafficConfig, ProxyConfig, TrafficStats
 from .constants import (
     BROWSER_IMPERSONATIONS,
     BROWSER_HEADERS,
-    DEFAULT_REFERERS,
+    get_referers,
     REQUEST_TIMEOUT_SECONDS,
     PROXY_ERROR_CODES,
     SUCCESS_STATUS_CODES,
@@ -15,38 +15,83 @@ from .constants import (
 
 
 class AsyncTrafficEngine:
-    def __init__(self, config: TrafficConfig, proxies: List[ProxyConfig], on_update: Optional[Callable[[TrafficStats], None]] = None):
+    def __init__(
+        self,
+        config: TrafficConfig,
+        proxies: List[ProxyConfig],
+        on_update: Optional[Callable[[TrafficStats], None]] = None,
+        on_log: Optional[Callable[[str], None]] = None,
+    ):
         self.config = config
         self.proxies = proxies
         self.on_update = on_update
+        self.on_log = on_log
         self.stats = TrafficStats()
         self.running = False
         self._stop_event = asyncio.Event()
         self._initial_proxy_count = len(proxies)
+        # Proxy pool management - track which proxies are currently in use
+        self._proxies_in_use: set = set()
+        self._proxy_lock = asyncio.Lock()
+        self._proxy_index = 0  # For round-robin when all proxies are in use
+
+    def _log(self, message: str):
+        """Log message to both Python logger and GUI callback."""
+        logging.info(message)
+        if self.on_log:
+            self.on_log(message)
+
+    async def _acquire_proxy(self) -> Optional[ProxyConfig]:
+        """Acquire an available proxy for exclusive use by a task."""
+        async with self._proxy_lock:
+            if not self.proxies:
+                return None
+
+            # Find proxies not currently in use
+            available = [
+                p for p in self.proxies if (p.host, p.port) not in self._proxies_in_use
+            ]
+
+            if available:
+                # Weighted selection from available proxies
+                try:
+                    weights = [max(p.score, 0.1) for p in available]
+                    proxy = random.choices(available, weights=weights, k=1)[0]
+                except (ValueError, IndexError):
+                    proxy = random.choice(available)
+            else:
+                # All proxies in use - use round-robin to distribute load
+                self._proxy_index = (self._proxy_index + 1) % len(self.proxies)
+                proxy = self.proxies[self._proxy_index]
+
+            # Mark proxy as in use
+            self._proxies_in_use.add((proxy.host, proxy.port))
+            return proxy
+
+    async def _release_proxy(self, proxy: Optional[ProxyConfig]):
+        """Release a proxy back to the pool."""
+        if proxy is None:
+            return
+        async with self._proxy_lock:
+            self._proxies_in_use.discard((proxy.host, proxy.port))
 
     async def _make_request(self):
-        """Performs a single visit using a random proxy and browser impersonation."""
+        """Performs a single visit using a unique proxy and browser impersonation."""
         if not self.running:
             return
 
         if self._initial_proxy_count > 0 and not self.proxies:
-            logging.error("No active proxies remaining. Stopping engine.")
+            self._log("No active proxies remaining. Stopping engine.")
             self.running = False
             return
 
         proxy = None
         proxy_config = None
         if self.proxies:
-            # Weighted random selection based on proxy score
-            try:
-                # Use score as weight, minimum 0.1 to give even bad proxies a small chance
-                weights = [max(p.score, 0.1) for p in self.proxies]
-                proxy_config = random.choices(self.proxies, weights=weights, k=1)[0]
-            except (ValueError, IndexError):
-                # Fallback if calculation fails
-                proxy_config = random.choice(self.proxies)
-
-            proxy = proxy_config.to_curl_cffi_format()
+            # Acquire a proxy for exclusive use during this request
+            proxy_config = await self._acquire_proxy()
+            if proxy_config:
+                proxy = proxy_config.to_curl_cffi_format()
 
         # Randomize impersonation
         impersonate = random.choice(BROWSER_IMPERSONATIONS)
@@ -54,9 +99,9 @@ class AsyncTrafficEngine:
         session = None
         try:
             self.stats.active_threads += 1
-            if self.on_update:
-                self.stats.active_proxies = len(self.proxies)
-                self.on_update(self.stats)
+            self.stats.total_requests += (
+                1  # Increment at start so req >= success+failed always
+            )
 
             # Create fresh session for each request (clean cookies/TLS state per "user")
             session = requests.AsyncSession(impersonate=impersonate)
@@ -66,7 +111,7 @@ class AsyncTrafficEngine:
 
             # Use browser-consistent headers (User-Agent is set by curl_cffi impersonate)
             headers = BROWSER_HEADERS.copy()
-            headers["Referer"] = random.choice(DEFAULT_REFERERS)
+            headers["Referer"] = random.choice(get_referers())
 
             logging.debug(f"Request to {self.config.target_url} via {impersonate}")
 
@@ -75,7 +120,7 @@ class AsyncTrafficEngine:
                 headers=headers,
                 timeout=REQUEST_TIMEOUT_SECONDS,
                 verify=self.config.verify_ssl,
-                proxies=proxies_dict
+                proxies=proxies_dict,
             )
 
             if response.status_code in SUCCESS_STATUS_CODES:
@@ -87,7 +132,9 @@ class AsyncTrafficEngine:
 
             # Simulate reading/view time
             if self.running:
-                view_time = random.uniform(self.config.min_duration, self.config.max_duration)
+                view_time = random.uniform(
+                    self.config.min_duration, self.config.max_duration
+                )
                 await asyncio.sleep(view_time)
 
         except Exception as e:
@@ -98,22 +145,27 @@ class AsyncTrafficEngine:
             is_proxy_error = any(code in err_msg for code in PROXY_ERROR_CODES)
 
             if is_proxy_error and proxy_config:
-                logging.warning(f"Proxy Failure: {err_msg}")
+                logging.debug(f"Proxy Failure: {err_msg}")
                 if self.proxies and proxy_config in self.proxies:
                     try:
                         self.proxies.remove(proxy_config)
                         remaining = len(self.proxies)
-                        logging.warning(f"Removed dead proxy {proxy_config.host}. Remaining: {remaining}")
+                        self._log(
+                            f"Removed dead proxy {proxy_config.host}:{proxy_config.port}. {remaining} remaining."
+                        )
                         if remaining == 0:
-                            logging.error("CRITICAL: All proxies removed! Stopping.")
+                            self._log("CRITICAL: All proxies removed! Stopping.")
                             self.running = False
                     except ValueError:
                         pass  # Already removed
             elif "curl: (60)" in err_msg:
-                logging.warning(f"SSL/TLS Error: {err_msg}")
+                logging.debug(f"SSL/TLS Error: {err_msg}")
             else:
                 logging.debug(f"Request Error: {err_msg}")
         finally:
+            # Release proxy back to pool
+            await self._release_proxy(proxy_config)
+
             # Clean up session
             if session:
                 try:
@@ -121,7 +173,6 @@ class AsyncTrafficEngine:
                 except Exception:
                     pass
             self.stats.active_threads -= 1
-            self.stats.total_requests += 1
             if self.on_update:
                 self.stats.active_proxies = len(self.proxies)
                 self.on_update(self.stats)
@@ -130,7 +181,16 @@ class AsyncTrafficEngine:
         """Main loop to spawn workers."""
         self.running = True
         self.stats = TrafficStats()  # Reset stats
-        logging.info("Engine started.")
+
+        # Burst mode tracking
+        burst_count = 0
+        burst_mode = self.config.burst_mode
+        burst_size = self.config.burst_requests
+
+        mode_str = "burst" if burst_mode else "continuous"
+        self._log(
+            f"Fast engine started ({mode_str}). {len(self.proxies)} proxies, {self.config.max_threads} threads."
+        )
 
         tasks = set()
 
@@ -138,7 +198,10 @@ class AsyncTrafficEngine:
             while self.running:
                 # Replenish tasks up to max_threads
                 while len(tasks) < self.config.max_threads and self.running:
-                    if self.config.total_visits > 0 and self.stats.total_requests >= self.config.total_visits:
+                    if (
+                        self.config.total_visits > 0
+                        and self.stats.total_requests >= self.config.total_visits
+                    ):
                         self.running = False
                         break
 
@@ -146,17 +209,42 @@ class AsyncTrafficEngine:
                     tasks.add(task)
                     task.add_done_callback(tasks.discard)
 
+                    # Track burst progress
+                    if burst_mode:
+                        burst_count += 1
+                        if burst_count >= burst_size:
+                            break  # Exit inner loop to trigger sleep
+
                 if not self.running:
                     break
 
-                await asyncio.sleep(0.1)  # Prevent tight loop
+                # Burst mode: sleep between bursts
+                if burst_mode and burst_count >= burst_size:
+                    # Wait for current burst to complete
+                    if tasks:
+                        await asyncio.wait(tasks, timeout=10)
+                        tasks = set()
+
+                    # Sleep between bursts
+                    sleep_time = random.uniform(
+                        self.config.burst_sleep_min, self.config.burst_sleep_max
+                    )
+                    self._log(
+                        f"Burst complete ({burst_size} requests). Sleeping {sleep_time:.1f}s..."
+                    )
+                    await asyncio.sleep(sleep_time)
+                    burst_count = 0
+                else:
+                    await asyncio.sleep(0.1)  # Prevent tight loop
 
             # Wait for pending tasks to finish gracefully
             if tasks:
                 await asyncio.wait(tasks, timeout=5)
 
         finally:
-            logging.info("Engine stopped.")
+            self._log(
+                f"Fast engine stopped. {self.stats.success} success, {self.stats.failed} failed."
+            )
 
     def stop(self):
         self.running = False

@@ -2,6 +2,7 @@
 Intelligent captcha solving manager with multi-provider support and fallback.
 Handles provider selection based on captcha type and automatic fallback on failure.
 """
+
 import logging
 from typing import Optional, Dict
 from .models import CaptchaConfig, CaptchaProvider, CaptchaType
@@ -10,7 +11,7 @@ from .captcha_solver import (
     CaptchaSolverBase,
     TwoCaptchaSolver,
     AntiCaptchaSolver,
-    aiohttp_available
+    aiohttp_available,
 )
 
 
@@ -43,7 +44,9 @@ class CaptchaManager:
             config: CaptchaConfig with API keys and preferences
         """
         if not aiohttp_available:
-            raise ImportError("aiohttp is required for captcha solving. Run: pip install aiohttp")
+            raise ImportError(
+                "aiohttp is required for captcha solving. Run: pip install aiohttp"
+            )
 
         self.config = config
         self._solvers: Dict[CaptchaProvider, CaptchaSolverBase] = {}
@@ -51,15 +54,13 @@ class CaptchaManager:
         # Initialize available solvers
         if config.twocaptcha_key:
             self._solvers[CaptchaProvider.TWOCAPTCHA] = TwoCaptchaSolver(
-                config.twocaptcha_key,
-                config.timeout_seconds
+                config.twocaptcha_key, config.timeout_seconds
             )
             logging.info("2captcha solver initialized")
 
         if config.anticaptcha_key:
             self._solvers[CaptchaProvider.ANTICAPTCHA] = AntiCaptchaSolver(
-                config.anticaptcha_key,
-                config.timeout_seconds
+                config.anticaptcha_key, config.timeout_seconds
             )
             logging.info("AntiCaptcha solver initialized")
 
@@ -69,7 +70,7 @@ class CaptchaManager:
 
     def get_available_providers(self) -> list:
         """Get list of available provider names."""
-        return list(self._solvers.keys())
+        return [p.value for p in self._solvers.keys()]
 
     def _get_solver_order(self, captcha_type: CaptchaType) -> list:
         """
@@ -84,7 +85,10 @@ class CaptchaManager:
         solvers = []
 
         # If specific primary provider is set (not AUTO)
-        if self.config.primary_provider not in (CaptchaProvider.AUTO, CaptchaProvider.NONE):
+        if self.config.primary_provider not in (
+            CaptchaProvider.AUTO,
+            CaptchaProvider.NONE,
+        ):
             if self.config.primary_provider in self._solvers:
                 solvers.append(self._solvers[self.config.primary_provider])
 
@@ -96,8 +100,7 @@ class CaptchaManager:
         else:
             # AUTO mode - use type-based preferences
             preferred_order = PROVIDER_PREFERENCES.get(
-                captcha_type,
-                [CaptchaProvider.TWOCAPTCHA, CaptchaProvider.ANTICAPTCHA]
+                captcha_type, [CaptchaProvider.TWOCAPTCHA, CaptchaProvider.ANTICAPTCHA]
             )
 
             for provider in preferred_order:
