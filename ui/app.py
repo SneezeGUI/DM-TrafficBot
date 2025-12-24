@@ -1,44 +1,42 @@
-import customtkinter as ctk
+import asyncio
+import os
 import threading
 import time
-import os
-import asyncio
-import requests
-from queue import Queue, Empty
+from queue import Empty, Queue
 from tkinter import filedialog, messagebox
+
+import customtkinter as ctk
+import requests
 
 # Configure customtkinter for proper scaling
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
-
-def scaled(base_value: int) -> int:
-    """Return a scaled value based on current widget scaling factor."""
-    try:
-        factor = ctk.ScalingTracker.get_widget_scaling(None)
-        return int(base_value * factor)
-    except Exception:
-        return base_value
-
-
-from core.models import (
-    TrafficConfig,
-    ProxyConfig,
-    TrafficStats,
-    ProxyCheckResult,
-    EngineMode,
+from core.engine import AsyncTrafficEngine  # noqa: E402
+from core.models import (  # noqa: E402
     BrowserConfig,
     BrowserSelection,
     CaptchaConfig,
     CaptchaProvider,
+    EngineMode,
     ProtectionBypassConfig,
+    ProxyCheckResult,
+    ProxyConfig,
+    TrafficConfig,
+    TrafficStats,
 )
-from core.engine import AsyncTrafficEngine
-from core.proxy_manager import ThreadedProxyManager
-from core.validators import DEFAULT_VALIDATORS
-from .utils import Utils
-from .components import VirtualGrid, DraggableSash
-from .styles import COLORS
+from core.proxy_manager import ThreadedProxyManager  # noqa: E402
+from core.validators import DEFAULT_VALIDATORS  # noqa: E402
+
+from .pages import (  # noqa: E402
+    DashboardPage,
+    ProxyManagerPage,
+    SettingsPage,
+    StressTestPage,
+)
+from .scaling import scaled  # noqa: E402
+from .styles import COLORS  # noqa: E402
+from .utils import Utils  # noqa: E402
 
 
 class ModernTrafficBot(ctk.CTk):
@@ -146,1041 +144,142 @@ class ModernTrafficBot(ctk.CTk):
 
     def setup_pages(self):
         self.pages = {}
+
+        # Initialize page objects
+        self.dashboard_page = DashboardPage(self)
+        self.proxy_manager_page = ProxyManagerPage(self)
+        self.stress_test_page = StressTestPage(self)
+        self.settings_page = SettingsPage(self)
+
+        # Create page frames and setup UI
         self.pages["run"] = ctk.CTkFrame(self, fg_color="transparent")
-        self.setup_run_ui(self.pages["run"])
+        self.dashboard_page.setup(self.pages["run"])
+        self._bind_dashboard_widgets()
+
         self.pages["proxy"] = ctk.CTkFrame(self, fg_color="transparent")
-        self.setup_proxy_ui(self.pages["proxy"])
+        self.proxy_manager_page.setup(self.pages["proxy"])
+        self._bind_proxy_manager_widgets()
+        self.toggle_manual_target()  # Initialize manual target toggle state
+
         self.pages["stress"] = ctk.CTkFrame(self, fg_color="transparent")
-        self.setup_stress_ui(self.pages["stress"])
+        self.stress_test_page.setup(self.pages["stress"])
+        self._bind_stress_test_widgets()
+
         self.pages["settings"] = ctk.CTkFrame(self, fg_color="transparent")
-        self.setup_settings_ui(self.pages["settings"])
+        self.settings_page.setup(self.pages["settings"])
+        self._bind_settings_widgets()
+
+    def _bind_dashboard_widgets(self):
+        """Bind dashboard page widgets to self for backward compatibility."""
+        p = self.dashboard_page
+        self.lbl_stats = p.lbl_stats
+        self.entry_url = p.entry_url
+        self.mode_selector = p.mode_selector
+        self.slider_threads = p.slider_threads
+        self.slider_view_min = p.slider_view_min
+        self.slider_view_max = p.slider_view_max
+        self.slider_burst_size = p.slider_burst_size
+        self.slider_burst_sleep = p.slider_burst_sleep
+        self.lbl_threads = p.lbl_threads
+        self.lbl_viewtime = p.lbl_viewtime
+        self.lbl_burst = p.lbl_burst
+        self.chk_burst_mode = p.chk_burst_mode
+        self.btn_attack = p.btn_attack
+        self.browser_stats_frame = p.browser_stats_frame
+        self.lbl_browser_type = p.lbl_browser_type
+        self.lbl_browser_contexts = p.lbl_browser_contexts
+        self.lbl_captcha_stats = p.lbl_captcha_stats
+        self.lbl_balance_2captcha = p.lbl_balance_2captcha
+        self.lbl_balance_anticaptcha = p.lbl_balance_anticaptcha
+        self.lbl_protection_stats = p.lbl_protection_stats
+        self.lbl_protection_event = p.lbl_protection_event
+        self.log_box = p.log_box
+
+    def _bind_proxy_manager_widgets(self):
+        """Bind proxy manager page widgets to self for backward compatibility."""
+        p = self.proxy_manager_page
+        self.proxy_grid = p.proxy_grid
+        self.progress_bar = p.progress_bar
+        self.lbl_loaded = p.lbl_loaded
+        self.lbl_proto_counts = p.lbl_proto_counts
+        self.lbl_bandwidth = p.lbl_bandwidth
+        self.lbl_anon_counts = p.lbl_anon_counts
+        self.entry_test_url = p.entry_test_url
+        self.entry_timeout = p.entry_timeout
+        self.entry_check_threads = p.entry_check_threads
+        self.entry_scrape_threads = p.entry_scrape_threads
+        self.entry_system_proxy = p.entry_system_proxy
+        self.combo_system_proxy_proto = p.combo_system_proxy_proto
+        self.chk_http = p.chk_http
+        self.chk_socks4 = p.chk_socks4
+        self.chk_socks5 = p.chk_socks5
+        self.chk_hide_dead = p.chk_hide_dead
+        self.chk_manual_target = p.chk_manual_target
+        self.chk_proxy_for_scrape = p.chk_proxy_for_scrape
+        self.chk_proxy_for_check = p.chk_proxy_for_check
+        self.chk_export_protocol = p.chk_export_protocol
+        self.btn_test = p.btn_test
+        self.btn_pause = p.btn_pause
+        self.btn_test_proxy = p.btn_test_proxy
+
+    def _bind_stress_test_widgets(self):
+        """Bind stress test page widgets to self for backward compatibility."""
+        p = self.stress_test_page
+        self.stress_stat_labels = p.stress_stat_labels
+        self.stress_entry_url = p.stress_entry_url
+        self.stress_attack_type = p.stress_attack_type
+        self.stress_method = p.stress_method
+        self.stress_proxy_count_label = p.stress_proxy_count_label
+        self.stress_slider_threads = p.stress_slider_threads
+        self.stress_slider_duration = p.stress_slider_duration
+        self.stress_slider_rps = p.stress_slider_rps
+        self.stress_lbl_threads = p.stress_lbl_threads
+        self.stress_lbl_duration = p.stress_lbl_duration
+        self.stress_lbl_rps = p.stress_lbl_rps
+        self.btn_stress_start = p.btn_stress_start
+        self.btn_stress_pause = p.btn_stress_pause
+        self.btn_stress_reset = p.btn_stress_reset
+        self.stress_log_box = p.stress_log_box
+
+    def _bind_settings_widgets(self):
+        """Bind settings page widgets to self for backward compatibility."""
+        p = self.settings_page
+        self.chk_headless = p.chk_headless
+        self.chk_verify_ssl = p.chk_verify_ssl
+        self.combo_browser = p.combo_browser
+        self.btn_browser_expand = p.btn_browser_expand
+        self.browser_paths_frame = p.browser_paths_frame
+        self.browser_paths_visible = p.browser_paths_visible
+        self.entry_chrome_path = p.entry_chrome_path
+        self.entry_chromium_path = p.entry_chromium_path
+        self.entry_edge_path = p.entry_edge_path
+        self.entry_brave_path = p.entry_brave_path
+        self.entry_firefox_path = p.entry_firefox_path
+        self.entry_other_path = p.entry_other_path
+        self.slider_contexts = p.slider_contexts
+        self.lbl_contexts = p.lbl_contexts
+        self.chk_stealth = p.chk_stealth
+        self.combo_captcha_primary = p.combo_captcha_primary
+        self.chk_captcha_fallback = p.chk_captcha_fallback
+        self.entry_2captcha_key = p.entry_2captcha_key
+        self.entry_anticaptcha_key = p.entry_anticaptcha_key
+        self.lbl_captcha_balance = p.lbl_captcha_balance
+        self.chk_cloudflare = p.chk_cloudflare
+        self.chk_akamai = p.chk_akamai
+        self.chk_auto_captcha = p.chk_auto_captcha
+        self.entry_cf_wait = p.entry_cf_wait
+        self.combo_test_depth = p.combo_test_depth
+        self.validator_checkboxes = p.validator_checkboxes
 
     def select_page(self, key):
-        for k, p in self.pages.items():
+        for _, p in self.pages.items():
             p.grid_forget()
-        for k, b in self.nav_btns.items():
+        for _, b in self.nav_btns.items():
             b.configure(fg_color="transparent", text_color=COLORS["text_dim"])
         self.pages[key].grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
         self.nav_btns[key].configure(fg_color=COLORS["card"], text_color=COLORS["text"])
 
-    def setup_run_ui(self, parent):
-        # Use grid for scalable layout with draggable sash
-        parent.grid_rowconfigure(0, weight=0)  # Scrollable config area
-        parent.grid_rowconfigure(1, weight=0)  # Draggable sash
-        parent.grid_rowconfigure(2, weight=1)  # Activity log expands
-        parent.grid_columnconfigure(0, weight=1)
-
-        # Track config area height for sash dragging
-        self._config_height = scaled(280)
-        self._config_min = scaled(150)
-        self._log_min = scaled(80)
-
-        # Scrollable container for config (enables scroll on small screens)
-        config_scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        config_scroll.grid(row=0, column=0, sticky="nsew", pady=(0, 0))
-        config_scroll.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(0, weight=0, minsize=self._config_height)
-
-        # Store reference for sash callback
-        self._config_scroll_parent = parent
-
-        # Draggable sash between config and log
-        def on_sash_drag(delta):
-            # Calculate new height
-            new_height = self._config_height + delta
-            # Get parent height for log minimum check
-            parent_height = parent.winfo_height()
-            max_config = (
-                parent_height - self._log_min - scaled(10)
-            )  # Leave room for log
-
-            # Clamp to valid range
-            new_height = max(self._config_min, min(new_height, max_config))
-
-            if new_height != self._config_height:
-                self._config_height = new_height
-                parent.grid_rowconfigure(0, weight=0, minsize=int(self._config_height))
-
-        self._dashboard_sash = DraggableSash(
-            parent,
-            on_drag=on_sash_drag,
-            min_above=self._config_min,
-            min_below=self._log_min,
-        )
-        self._dashboard_sash.grid(row=1, column=0, sticky="ew", pady=(0, 0))
-
-        # Primary Stats Row - Request metrics
-        stats_frame = ctk.CTkFrame(config_scroll, fg_color="transparent")
-        stats_frame.pack(fill="x", pady=(0, 8))
-        stats_frame.grid_columnconfigure((0, 1, 2, 3), weight=1, uniform="stats")
-
-        self.lbl_stats = {}
-        stat_configs = [
-            ("req", "Requests", COLORS["text"]),
-            ("success", "Success", COLORS["success"]),
-            ("fail", "Failed", COLORS["danger"]),
-            ("proxies", "Proxies", COLORS["accent"]),
-        ]
-        for col, (key, title, color) in enumerate(stat_configs):
-            card = ctk.CTkFrame(stats_frame, fg_color=COLORS["card"])
-            card.grid(row=0, column=col, sticky="nsew", padx=3, pady=2)
-            card.grid_columnconfigure(0, weight=1)
-            ctk.CTkLabel(
-                card, text=title, font=("Roboto", 10), text_color=COLORS["text_dim"]
-            ).pack(pady=(8, 2))
-            lbl = ctk.CTkLabel(
-                card, text="0", font=("Roboto", 22, "bold"), text_color=color
-            )
-            lbl.pack(pady=(0, 8))
-            self.lbl_stats[key] = lbl
-
-        # Configuration Card
-        cfg_frame = ctk.CTkFrame(config_scroll, fg_color=COLORS["card"])
-        cfg_frame.pack(fill="x", pady=(0, 8))
-
-        ctk.CTkLabel(
-            cfg_frame, text="Attack Configuration", font=("Roboto", 14, "bold")
-        ).pack(anchor="w", padx=20, pady=15)
-
-        self.entry_url = ctk.CTkEntry(
-            cfg_frame, placeholder_text="https://target.com", height=scaled(32)
-        )
-        self.entry_url.pack(fill="x", padx=20, pady=(0, 10))
-        self.entry_url.insert(0, self.settings["target_url"])
-
-        # Engine Mode Selector
-        mode_frame = ctk.CTkFrame(cfg_frame, fg_color="transparent")
-        mode_frame.pack(fill="x", padx=20, pady=(0, 10))
-
-        ctk.CTkLabel(mode_frame, text="Engine:", font=("Roboto", 12)).pack(
-            side="left", padx=(0, 10)
-        )
-
-        self.mode_selector = ctk.CTkSegmentedButton(
-            mode_frame,
-            values=["Fast (curl)", "Browser (stealth)"],
-            command=self.on_mode_change,
-            font=("Roboto", 11),
-            fg_color=COLORS["card"],
-            selected_color=COLORS["accent"],
-            selected_hover_color=COLORS["accent_hover"],
-        )
-        current_mode = self.settings.get("engine_mode", "curl")
-        self.mode_selector.set(
-            "Fast (curl)" if current_mode == "curl" else "Browser (stealth)"
-        )
-        self.mode_selector.pack(side="left", fill="x", expand=True)
-
-        # Sliders using grid for proportional sizing
-        slider_row = ctk.CTkFrame(cfg_frame, fg_color="transparent")
-        slider_row.pack(fill="x", padx=15, pady=10)
-        slider_row.grid_columnconfigure(0, weight=2)  # Threads
-        slider_row.grid_columnconfigure(1, weight=3)  # Duration
-        slider_row.grid_columnconfigure(2, weight=3)  # Burst mode
-
-        # Threads slider
-        t_frame = ctk.CTkFrame(slider_row, fg_color="transparent")
-        t_frame.grid(row=0, column=0, sticky="nsew", padx=5)
-
-        self.lbl_threads = ctk.CTkLabel(
-            t_frame, text=f"Threads: {self.settings.get('threads', 5)}"
-        )
-        self.lbl_threads.pack(anchor="w")
-
-        self.slider_threads = ctk.CTkSlider(
-            t_frame,
-            from_=1,
-            to=100,
-            number_of_steps=99,
-            command=self.update_thread_lbl,
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.slider_threads.set(self.settings.get("threads", 5))
-        self.slider_threads.pack(fill="x", pady=5)
-
-        # View duration sliders
-        v_frame = ctk.CTkFrame(slider_row, fg_color="transparent")
-        v_frame.grid(row=0, column=1, sticky="nsew", padx=5)
-
-        self.lbl_viewtime = ctk.CTkLabel(
-            v_frame,
-            text=f"Duration: {self.settings.get('viewtime_min', 5)}s - {self.settings.get('viewtime_max', 10)}s",
-        )
-        self.lbl_viewtime.pack(anchor="w")
-
-        # Min/Max sliders in a sub-grid
-        duration_sliders = ctk.CTkFrame(v_frame, fg_color="transparent")
-        duration_sliders.pack(fill="x")
-        duration_sliders.grid_columnconfigure((0, 1), weight=1)
-
-        min_frame = ctk.CTkFrame(duration_sliders, fg_color="transparent")
-        min_frame.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        ctk.CTkLabel(min_frame, text="Min:", font=("Roboto", 10)).pack(anchor="w")
-        self.slider_view_min = ctk.CTkSlider(
-            min_frame,
-            from_=1,
-            to=60,
-            number_of_steps=59,
-            command=self.update_view_lbl,
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.slider_view_min.set(self.settings.get("viewtime_min", 5))
-        self.slider_view_min.pack(fill="x", pady=2)
-
-        max_frame = ctk.CTkFrame(duration_sliders, fg_color="transparent")
-        max_frame.grid(row=0, column=1, sticky="ew", padx=(5, 0))
-        ctk.CTkLabel(max_frame, text="Max:", font=("Roboto", 10)).pack(anchor="w")
-        self.slider_view_max = ctk.CTkSlider(
-            max_frame,
-            from_=1,
-            to=60,
-            number_of_steps=59,
-            command=self.update_view_lbl,
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.slider_view_max.set(self.settings.get("viewtime_max", 10))
-        self.slider_view_max.pack(fill="x", pady=2)
-
-        # Burst mode controls
-        burst_frame = ctk.CTkFrame(slider_row, fg_color="transparent")
-        burst_frame.grid(row=0, column=2, sticky="nsew", padx=5)
-
-        # Burst enable checkbox and label
-        burst_header = ctk.CTkFrame(burst_frame, fg_color="transparent")
-        burst_header.pack(fill="x")
-        self.chk_burst_mode = ctk.CTkCheckBox(
-            burst_header,
-            text="",
-            width=scaled(20),
-            command=self.on_burst_toggle,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        self.chk_burst_mode.pack(side="left")
-        if self.settings.get("burst_mode", False):
-            self.chk_burst_mode.select()
-
-        self.lbl_burst = ctk.CTkLabel(
-            burst_header,
-            text=f"Burst: {self.settings.get('burst_requests', 10)} req, {self.settings.get('burst_sleep_min', 2)}-{self.settings.get('burst_sleep_max', 5)}s sleep",
-        )
-        self.lbl_burst.pack(side="left", padx=(2, 0))
-
-        # Burst size and sleep sliders
-        burst_sliders = ctk.CTkFrame(burst_frame, fg_color="transparent")
-        burst_sliders.pack(fill="x")
-        burst_sliders.grid_columnconfigure((0, 1), weight=1)
-
-        # Burst size (requests per burst)
-        size_frame = ctk.CTkFrame(burst_sliders, fg_color="transparent")
-        size_frame.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        ctk.CTkLabel(size_frame, text="Requests:", font=("Roboto", scaled(10))).pack(
-            anchor="w"
-        )
-        self.slider_burst_size = ctk.CTkSlider(
-            size_frame,
-            from_=5,
-            to=50,
-            number_of_steps=45,
-            command=self.update_burst_lbl,
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.slider_burst_size.set(self.settings.get("burst_requests", 10))
-        self.slider_burst_size.pack(fill="x", pady=2)
-
-        # Sleep duration (min-max combined as single slider for simplicity)
-        sleep_frame = ctk.CTkFrame(burst_sliders, fg_color="transparent")
-        sleep_frame.grid(row=0, column=1, sticky="ew", padx=(5, 0))
-        ctk.CTkLabel(sleep_frame, text="Sleep (s):", font=("Roboto", scaled(10))).pack(
-            anchor="w"
-        )
-        self.slider_burst_sleep = ctk.CTkSlider(
-            sleep_frame,
-            from_=1,
-            to=30,
-            number_of_steps=29,
-            command=self.update_burst_lbl,
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.slider_burst_sleep.set(self.settings.get("burst_sleep_max", 5))
-        self.slider_burst_sleep.pack(fill="x", pady=2)
-
-        # Button Row
-        btn_row = ctk.CTkFrame(cfg_frame, fg_color="transparent")
-        btn_row.pack(fill="x", padx=20, pady=20)
-
-        self.btn_attack = ctk.CTkButton(
-            btn_row,
-            text="START CAMPAIGN",
-            height=scaled(40),
-            fg_color=COLORS["success"],
-            font=("Roboto", scaled(13), "bold"),
-            command=self.toggle_attack,
-        )
-        self.btn_attack.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        self.btn_reset = ctk.CTkButton(
-            btn_row,
-            text="RESET",
-            height=scaled(40),
-            fg_color=COLORS["warning"],
-            font=("Roboto", scaled(11), "bold"),
-            width=scaled(70),
-            command=self.reset_stats,
-        )
-        self.btn_reset.pack(side="right")
-
-        # Browser Stats Panel - shown only in browser mode, inside scrollable area
-        self.browser_stats_frame = ctk.CTkFrame(config_scroll, fg_color="transparent")
-        self.browser_stats_frame.pack(fill="x", pady=(0, 8))
-        self.browser_stats_frame.grid_columnconfigure(
-            (0, 1, 2), weight=1, uniform="bstats"
-        )
-
-        # Browser Info Card
-        browser_card = ctk.CTkFrame(self.browser_stats_frame, fg_color=COLORS["card"])
-        browser_card.grid(row=0, column=0, sticky="nsew", padx=3, pady=2)
-        ctk.CTkLabel(
-            browser_card,
-            text="Browser",
-            font=("Roboto", 10),
-            text_color=COLORS["text_dim"],
-        ).pack(pady=(8, 2))
-        self.lbl_browser_type = ctk.CTkLabel(
-            browser_card,
-            text="--",
-            font=("Roboto", 16, "bold"),
-            text_color=COLORS["accent"],
-        )
-        self.lbl_browser_type.pack(pady=(0, 2))
-        self.lbl_browser_contexts = ctk.CTkLabel(
-            browser_card,
-            text="Contexts: 0/0",
-            font=("Roboto", 10),
-            text_color=COLORS["text_dim"],
-        )
-        self.lbl_browser_contexts.pack(pady=(0, 8))
-
-        # Captcha Stats Card
-        captcha_card = ctk.CTkFrame(self.browser_stats_frame, fg_color=COLORS["card"])
-        captcha_card.grid(row=0, column=1, sticky="nsew", padx=3, pady=2)
-        ctk.CTkLabel(
-            captcha_card,
-            text="Captcha (✓/✗/⋯)",
-            font=("Roboto", 10),
-            text_color=COLORS["text_dim"],
-        ).pack(pady=(8, 2))
-        self.lbl_captcha_stats = ctk.CTkLabel(
-            captcha_card,
-            text="0 / 0 / 0",
-            font=("Roboto", 16, "bold"),
-            text_color=COLORS["success"],
-        )
-        self.lbl_captcha_stats.pack(pady=(0, 4))
-
-        # Separate balance labels for each provider
-        balance_frame = ctk.CTkFrame(captcha_card, fg_color="transparent")
-        balance_frame.pack(fill="x", padx=10, pady=(0, 8))
-        balance_frame.grid_columnconfigure((0, 1), weight=1)
-
-        self.lbl_balance_2captcha = ctk.CTkLabel(
-            balance_frame,
-            text="2Cap: --",
-            font=("Roboto", 10),
-            text_color=COLORS["text_dim"],
-        )
-        self.lbl_balance_2captcha.grid(row=0, column=0, sticky="w", padx=(0, 5))
-        self.lbl_balance_anticaptcha = ctk.CTkLabel(
-            balance_frame,
-            text="Anti: --",
-            font=("Roboto", 10),
-            text_color=COLORS["text_dim"],
-        )
-        self.lbl_balance_anticaptcha.grid(row=0, column=1, sticky="e", padx=(5, 0))
-
-        # Protection Status Card
-        protection_card = ctk.CTkFrame(
-            self.browser_stats_frame, fg_color=COLORS["card"]
-        )
-        protection_card.grid(row=0, column=2, sticky="nsew", padx=3, pady=2)
-        ctk.CTkLabel(
-            protection_card,
-            text="Protection (det/byp)",
-            font=("Roboto", 10),
-            text_color=COLORS["text_dim"],
-        ).pack(pady=(8, 2))
-        self.lbl_protection_stats = ctk.CTkLabel(
-            protection_card,
-            text="0 / 0",
-            font=("Roboto", 16, "bold"),
-            text_color=COLORS["warning"],
-        )
-        self.lbl_protection_stats.pack(pady=(0, 2))
-        self.lbl_protection_event = ctk.CTkLabel(
-            protection_card,
-            text="No events",
-            font=("Roboto", 10),
-            text_color=COLORS["text_dim"],
-        )
-        self.lbl_protection_event.pack(pady=(0, 8))
-
-        # Hide browser stats by default (shown when browser mode selected)
-        self._update_browser_stats_visibility()
-
-        # Activity Log (row 2) - expands to fill remaining space below sash
-        log_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        log_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 0))
-        log_frame.grid_rowconfigure(1, weight=1, minsize=self._log_min)
-        log_frame.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            log_frame,
-            text="Activity Log",
-            font=("Roboto", scaled(11)),
-            text_color=COLORS["text_dim"],
-        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
-        self.log_box = ctk.CTkTextbox(
-            log_frame, fg_color=COLORS["card"], height=scaled(100)
-        )
-        self.log_box.grid(row=1, column=0, sticky="nsew")
-        self.log_box.configure(
-            state="disabled"
-        )  # Start disabled to prevent user editing
-
-    def update_thread_lbl(self, value):
-        self.lbl_threads.configure(text=f"Threads: {int(value)}")
-
-    def update_view_lbl(self, value):
-        mn = int(self.slider_view_min.get())
-        mx = int(self.slider_view_max.get())
-        self.lbl_viewtime.configure(text=f"Duration: {mn}s - {mx}s")
-
-    def update_burst_lbl(self, value=None):
-        """Update burst mode label with current settings."""
-        burst_size = int(self.slider_burst_size.get())
-        sleep_max = int(self.slider_burst_sleep.get())
-        sleep_min = max(1, sleep_max // 2)  # Min is roughly half of max
-        self.lbl_burst.configure(
-            text=f"Burst: {burst_size} req, {sleep_min}-{sleep_max}s sleep"
-        )
-
-    def on_burst_toggle(self):
-        """Handle burst mode toggle."""
-        enabled = self.chk_burst_mode.get()
-        self.settings["burst_mode"] = enabled
-        state = "enabled" if enabled else "disabled"
-        self.log(f"Burst mode {state}")
-
-    def on_mode_change(self, value):
-        """Handle engine mode change."""
-        is_browser = "Browser" in value
-        self.settings["engine_mode"] = "browser" if is_browser else "curl"
-
-        # Adjust thread slider limits based on mode
-        if is_browser:
-            # Browser mode: 1-10 contexts (RAM limited)
-            self.slider_threads.configure(from_=1, to=10, number_of_steps=9)
-            current = int(self.slider_threads.get())
-            if current > 10:
-                self.slider_threads.set(5)
-                self.lbl_threads.configure(text="Threads: 5")
-        else:
-            # Curl mode: 1-100 threads
-            self.slider_threads.configure(from_=1, to=100, number_of_steps=99)
-
-        # Update browser stats visibility
-        self._update_browser_stats_visibility()
-
-        self.log(f"Engine mode: {'Browser (stealth)' if is_browser else 'Fast (curl)'}")
-
-    def _update_browser_stats_visibility(self):
-        """Show/hide browser stats row based on engine mode."""
-        is_browser = self.settings.get("engine_mode", "curl") == "browser"
-        if is_browser:
-            self.browser_stats_frame.pack(fill="x", pady=(0, 8))
-        else:
-            self.browser_stats_frame.pack_forget()
-
-    def setup_proxy_ui(self, parent):
-        # Scrollable toolbar container for small screens
-        # Uses pack with a maximum height that enables scrolling when constrained
-        tools_scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        tools_scroll.pack(fill="x", pady=(0, 5))
-        tools_scroll.configure(height=scaled(200))
-
-        tools = ctk.CTkFrame(tools_scroll, fg_color=COLORS["card"])
-        tools.pack(fill="x", pady=(0, 5))
-
-        # Row 1: Actions & Protocol Checkboxes
-        r1 = ctk.CTkFrame(tools, fg_color="transparent")
-        r1.pack(fill="x", padx=10, pady=10)
-
-        ctk.CTkButton(
-            r1,
-            text="Scrape New",
-            width=scaled(100),
-            command=self.run_scraper,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        ).pack(side="left", padx=5)
-        ctk.CTkButton(
-            r1,
-            text="Load File",
-            width=scaled(100),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-            command=self.load_proxy_file,
-        ).pack(side="left", padx=5)
-        ctk.CTkButton(
-            r1,
-            text="Clipboard",
-            width=scaled(80),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-            command=self.import_from_clipboard,
-        ).pack(side="left", padx=5)
-        ctk.CTkButton(
-            r1,
-            text="Clear All",
-            width=scaled(80),
-            fg_color=COLORS["danger"],
-            command=self.clear_proxies,
-        ).pack(side="right", padx=5)
-        ctk.CTkButton(
-            r1,
-            text="Clear Dead",
-            width=scaled(80),
-            fg_color=COLORS["warning"],
-            command=self.clear_dead_proxies,
-        ).pack(side="right", padx=5)
-
-        # Export buttons frame
-        export_frame = ctk.CTkFrame(r1, fg_color="transparent")
-        export_frame.pack(side="right", padx=5)
-        ctk.CTkLabel(export_frame, text="Export:", font=("Roboto", scaled(11))).pack(
-            side="left", padx=(0, 3)
-        )
-        self.chk_export_protocol = ctk.CTkCheckBox(
-            export_frame,
-            text="Proto",
-            width=scaled(50),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("export_with_protocol", True):
-            self.chk_export_protocol.select()
-        self.chk_export_protocol.pack(side="left", padx=(0, 3))
-        ctk.CTkButton(
-            export_frame,
-            text="All",
-            width=scaled(35),
-            fg_color="#F39C12",
-            hover_color="#D68910",
-            command=lambda: self.export_proxies("all"),
-        ).pack(side="left", padx=1)
-        ctk.CTkButton(
-            export_frame,
-            text="HTTP",
-            width=scaled(40),
-            fg_color="#3498DB",
-            hover_color="#2980B9",
-            command=lambda: self.export_proxies("http"),
-        ).pack(side="left", padx=1)
-        ctk.CTkButton(
-            export_frame,
-            text="HTTPS",
-            width=scaled(45),
-            fg_color="#9B59B6",
-            hover_color="#8E44AD",
-            command=lambda: self.export_proxies("https"),
-        ).pack(side="left", padx=1)
-        ctk.CTkButton(
-            export_frame,
-            text="SOCKS",
-            width=scaled(45),
-            fg_color="#1ABC9C",
-            hover_color="#16A085",
-            command=lambda: self.export_proxies("socks"),
-        ).pack(side="left", padx=1)
-
-        proto_frm = ctk.CTkFrame(tools, fg_color="transparent")
-        proto_frm.pack(fill="x", padx=10, pady=5)
-
-        self.chk_http = ctk.CTkCheckBox(
-            proto_frm,
-            text="HTTP/S",
-            width=scaled(70),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("use_http", True):
-            self.chk_http.select()
-        self.chk_http.pack(side="left", padx=10)
-
-        self.chk_socks4 = ctk.CTkCheckBox(
-            proto_frm,
-            text="SOCKS4",
-            width=scaled(70),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("use_socks4", True):
-            self.chk_socks4.select()
-        self.chk_socks4.pack(side="left", padx=10)
-
-        self.chk_socks5 = ctk.CTkCheckBox(
-            proto_frm,
-            text="SOCKS5",
-            width=scaled(70),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("use_socks5", True):
-            self.chk_socks5.select()
-        self.chk_socks5.pack(side="left", padx=10)
-
-        self.chk_hide_dead = ctk.CTkCheckBox(
-            proto_frm, text="Hide Dead", width=scaled(70), fg_color=COLORS["danger"]
-        )
-        if self.settings.get("hide_dead", True):
-            self.chk_hide_dead.select()
-        self.chk_hide_dead.pack(side="right", padx=10)
-
-        r_counts = ctk.CTkFrame(tools, fg_color="transparent")
-        r_counts.pack(fill="x", padx=10, pady=5)
-
-        self.lbl_loaded = ctk.CTkLabel(
-            r_counts, text="Total: 0", font=("Roboto", scaled(12), "bold")
-        )
-        self.lbl_loaded.pack(side="left", padx=5)
-
-        self.lbl_proto_counts = ctk.CTkLabel(
-            r_counts,
-            text="HTTP: 0 | HTTPS: 0 | SOCKS4: 0 | SOCKS5: 0",
-            text_color=COLORS["text_dim"],
-            font=("Roboto", scaled(11)),
-        )
-        self.lbl_proto_counts.pack(side="right", padx=15)
-
-        self.lbl_bandwidth = ctk.CTkLabel(
-            r_counts,
-            text="Traffic: 0.00 Mbps (0.0 MB)",
-            text_color=COLORS["success"],
-            font=("Roboto", scaled(11), "bold"),
-        )
-        self.lbl_bandwidth.pack(side="right", padx=5)
-
-        # Anonymity counts row
-        r_anon = ctk.CTkFrame(tools, fg_color="transparent")
-        r_anon.pack(fill="x", padx=10, pady=2)
-
-        ctk.CTkLabel(
-            r_anon,
-            text="Anonymity:",
-            font=("Roboto", scaled(11)),
-            text_color=COLORS["text_dim"],
-        ).pack(side="left", padx=5)
-        self.lbl_anon_counts = ctk.CTkLabel(
-            r_anon,
-            text="Elite: 0 | Anonymous: 0 | Transparent: 0 | Unknown: 0",
-            text_color=COLORS["text_dim"],
-            font=("Roboto", scaled(11)),
-        )
-        self.lbl_anon_counts.pack(side="left", padx=10)
-
-        r2 = ctk.CTkFrame(tools, fg_color=COLORS["bg"])
-        r2.pack(fill="x", padx=10, pady=(0, 10))
-
-        # Left side - Test URL (flexible width)
-        r2_left = ctk.CTkFrame(r2, fg_color="transparent")
-        r2_left.pack(side="left", fill="x", expand=True, padx=5, pady=5)
-
-        # Manual target checkbox - when unchecked, uses validators from settings
-        self.chk_manual_target = ctk.CTkCheckBox(
-            r2_left,
-            text="Manual:",
-            width=scaled(70),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-            command=self.toggle_manual_target,
-        )
-        if self.settings.get("use_manual_target", True):
-            self.chk_manual_target.select()
-        self.chk_manual_target.pack(side="left", padx=(0, 2))
-
-        self.entry_test_url = ctk.CTkEntry(
-            r2_left, placeholder_text="Test URL (or use validators)"
-        )
-        self.entry_test_url.insert(0, self.settings["proxy_test_url"])
-        self.entry_test_url.pack(side="left", fill="x", expand=True, padx=(0, 5))
-
-        ctk.CTkLabel(r2_left, text="Timeout:").pack(side="left", padx=2)
-        self.entry_timeout = ctk.CTkEntry(r2_left, width=scaled(50))
-        self.entry_timeout.insert(0, str(self.settings["proxy_timeout"]))
-        self.entry_timeout.pack(side="left", padx=2)
-
-        ctk.CTkLabel(r2_left, text="Threads:").pack(side="left", padx=(5, 2))
-        self.entry_check_threads = ctk.CTkEntry(r2_left, width=scaled(40))
-        self.entry_check_threads.insert(0, str(self.settings["proxy_check_threads"]))
-        self.entry_check_threads.pack(side="left", padx=2)
-
-        ctk.CTkLabel(r2_left, text="Scrape:").pack(side="left", padx=(5, 2))
-        self.entry_scrape_threads = ctk.CTkEntry(r2_left, width=scaled(40))
-        self.entry_scrape_threads.insert(0, str(self.settings["proxy_scrape_threads"]))
-        self.entry_scrape_threads.pack(side="left", padx=2)
-
-        # Right side - Buttons (fixed width)
-        r2_right = ctk.CTkFrame(r2, fg_color="transparent")
-        r2_right.pack(side="right", padx=5, pady=5)
-
-        self.btn_pause = ctk.CTkButton(
-            r2_right,
-            text="⏸ PAUSE",
-            width=scaled(80),
-            fg_color=COLORS["warning"],
-            command=self.toggle_pause_test,
-            state="disabled",
-        )
-        self.btn_pause.pack(side="left", padx=2)
-
-        self.btn_test = ctk.CTkButton(
-            r2_right,
-            text="TEST ALL",
-            width=scaled(80),
-            fg_color=COLORS["success"],
-            command=self.toggle_test,
-        )
-        self.btn_test.pack(side="left", padx=2)
-
-        r3 = ctk.CTkFrame(tools, fg_color=COLORS["bg"])
-        r3.pack(fill="x", padx=10, pady=(0, 5))
-
-        # Left side - Label and protocol combo (fixed)
-        ctk.CTkLabel(r3, text="System Proxy:").pack(side="left", padx=5)
-
-        self.combo_system_proxy_proto = ctk.CTkComboBox(
-            r3, values=["http", "socks4", "socks5"], width=scaled(80)
-        )
-        self.combo_system_proxy_proto.set(
-            self.settings.get("system_proxy_protocol", "http")
-        )
-        self.combo_system_proxy_proto.pack(side="left", padx=2)
-
-        # Right side - Buttons and checkboxes (fixed, pack first so they don't get clipped)
-        self.btn_test_proxy = ctk.CTkButton(
-            r3,
-            text="TEST",
-            width=scaled(50),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-            command=self.test_system_proxy,
-        )
-        self.btn_test_proxy.pack(side="right", padx=5)
-
-        self.chk_proxy_for_check = ctk.CTkCheckBox(
-            r3,
-            text="Check",
-            width=scaled(60),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("use_proxy_for_check", False):
-            self.chk_proxy_for_check.select()
-        self.chk_proxy_for_check.pack(side="right", padx=2)
-
-        self.chk_proxy_for_scrape = ctk.CTkCheckBox(
-            r3,
-            text="Scrape",
-            width=scaled(65),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("use_proxy_for_scrape", False):
-            self.chk_proxy_for_scrape.select()
-        self.chk_proxy_for_scrape.pack(side="right", padx=2)
-
-        # Middle - Proxy entry (flexible, fills remaining space)
-        self.entry_system_proxy = ctk.CTkEntry(r3, placeholder_text="user:pass@ip:port")
-        self.entry_system_proxy.insert(0, self.settings.get("system_proxy", ""))
-        self.entry_system_proxy.pack(side="left", fill="x", expand=True, padx=5)
-
-        # Progress bar - always visible (pinned) to prevent layout jumping
-        self.progress_bar = ctk.CTkProgressBar(
-            parent, height=scaled(10), progress_color=COLORS["accent"]
-        )
-        self.progress_bar.set(0)
-        self.progress_bar.pack(fill="x", pady=(0, 5))
-
-        self.proxy_grid = VirtualGrid(
-            parent, columns=["Address", "Proto", "Country", "Status", "Ping", "Anon"]
-        )
-        self.proxy_grid.pack(fill="both", expand=True)
-
-        # Initialize manual target toggle state
-        self.toggle_manual_target()
-
-    def setup_stress_ui(self, parent):
-        """Set up the Stress Test tab UI."""
-        parent.grid_rowconfigure(0, weight=0)  # Scrollable config
-        parent.grid_rowconfigure(1, weight=0)  # Draggable sash
-        parent.grid_rowconfigure(2, weight=1)  # Log expands
-        parent.grid_columnconfigure(0, weight=1)
-
-        # Track config area height for sash dragging
-        self._stress_config_height = scaled(300)
-        self._stress_config_min = scaled(150)
-        self._stress_log_min = scaled(80)
-
-        # Scrollable container for config (enables scroll on small screens)
-        config_scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        config_scroll.grid(row=0, column=0, sticky="nsew", pady=(0, 0))
-        config_scroll.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(0, weight=0, minsize=self._stress_config_height)
-
-        # Draggable sash between config and log
-        def on_stress_sash_drag(delta):
-            new_height = self._stress_config_height + delta
-            parent_height = parent.winfo_height()
-            max_config = parent_height - self._stress_log_min - scaled(10)
-            new_height = max(self._stress_config_min, min(new_height, max_config))
-            if new_height != self._stress_config_height:
-                self._stress_config_height = new_height
-                parent.grid_rowconfigure(
-                    0, weight=0, minsize=int(self._stress_config_height)
-                )
-
-        self._stress_sash = DraggableSash(
-            parent,
-            on_drag=on_stress_sash_drag,
-            min_above=self._stress_config_min,
-            min_below=self._stress_log_min,
-        )
-        self._stress_sash.grid(row=1, column=0, sticky="ew", pady=(0, 0))
-
-        # Warning Banner
-        warning_frame = ctk.CTkFrame(config_scroll, fg_color="#8B0000")
-        warning_frame.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(
-            warning_frame,
-            text="⚠️  FOR AUTHORIZED SECURITY TESTING ONLY - TEST YOUR OWN SERVERS  ⚠️",
-            font=("Roboto", 12, "bold"),
-            text_color="white",
-        ).pack(pady=8)
-
-        # Stats Row
-        stats_frame = ctk.CTkFrame(config_scroll, fg_color="transparent")
-        stats_frame.pack(fill="x", pady=(0, 8))
-        stats_frame.grid_columnconfigure(
-            (0, 1, 2, 3, 4, 5), weight=1, uniform="stress_stats"
-        )
-
-        self.stress_stat_labels = {}
-        stress_stat_configs = [
-            ("requests", "Requests", COLORS["text"]),
-            ("success", "Success", COLORS["success"]),
-            ("failed", "Failed", COLORS["danger"]),
-            ("rps", "RPS", COLORS["accent"]),
-            ("latency", "Latency", COLORS["warning"]),
-            ("proxies", "Proxies", COLORS["text"]),
-        ]
-        for col, (key, title, color) in enumerate(stress_stat_configs):
-            card = ctk.CTkFrame(stats_frame, fg_color=COLORS["card"])
-            card.grid(row=0, column=col, sticky="nsew", padx=2, pady=2)
-            ctk.CTkLabel(
-                card, text=title, font=("Roboto", 9), text_color=COLORS["text_dim"]
-            ).pack(pady=(6, 1))
-            lbl = ctk.CTkLabel(
-                card, text="0", font=("Roboto", 16, "bold"), text_color=color
-            )
-            lbl.pack(pady=(0, 6))
-            self.stress_stat_labels[key] = lbl
-
-        # Configuration Card
-        cfg_frame = ctk.CTkFrame(config_scroll, fg_color=COLORS["card"])
-        cfg_frame.pack(fill="x", pady=(0, 8))
-
-        ctk.CTkLabel(
-            cfg_frame, text="Stress Test Configuration", font=("Roboto", 14, "bold")
-        ).pack(anchor="w", padx=20, pady=15)
-
-        # Target URL (HTTP only)
-        target_row = ctk.CTkFrame(cfg_frame, fg_color="transparent")
-        target_row.pack(fill="x", padx=20, pady=(0, 10))
-
-        self.stress_entry_url = ctk.CTkEntry(
-            target_row,
-            placeholder_text="http://your-server.com/test",
-            height=scaled(32),
-        )
-        self.stress_entry_url.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        ctk.CTkLabel(
-            target_row,
-            text="HTTP Only",
-            font=("Roboto", 10),
-            text_color=COLORS["warning"],
-        ).pack(side="right")
-
-        # Attack Type & Method Row
-        type_row = ctk.CTkFrame(cfg_frame, fg_color="transparent")
-        type_row.pack(fill="x", padx=20, pady=(0, 10))
-
-        ctk.CTkLabel(type_row, text="Attack:", font=("Roboto", scaled(12))).pack(
-            side="left", padx=(0, 5)
-        )
-        self.stress_attack_type = ctk.CTkComboBox(
-            type_row,
-            values=["HTTP Flood", "Slowloris", "RUDY", "Randomized"],
-            width=scaled(130),
-            state="readonly",
-        )
-        self.stress_attack_type.set("HTTP Flood")
-        self.stress_attack_type.pack(side="left", padx=(0, 20))
-
-        ctk.CTkLabel(type_row, text="Method:", font=("Roboto", scaled(12))).pack(
-            side="left", padx=(0, 5)
-        )
-        self.stress_method = ctk.CTkComboBox(
-            type_row,
-            values=["GET", "POST", "HEAD", "PUT", "DELETE"],
-            width=scaled(80),
-            state="readonly",
-        )
-        self.stress_method.set("GET")
-        self.stress_method.pack(side="left", padx=(0, 20))
-
-        # HTTP Proxies count label
-        self.stress_proxy_count_label = ctk.CTkLabel(
-            type_row,
-            text="HTTP Proxies: 0",
-            font=("Roboto", 11),
-            text_color=COLORS["accent"],
-        )
-        self.stress_proxy_count_label.pack(side="right")
-
-        # Sliders Row
-        slider_row = ctk.CTkFrame(cfg_frame, fg_color="transparent")
-        slider_row.pack(fill="x", padx=15, pady=10)
-        slider_row.grid_columnconfigure((0, 1, 2), weight=1)
-
-        # Threads slider
-        t_frame = ctk.CTkFrame(slider_row, fg_color="transparent")
-        t_frame.grid(row=0, column=0, sticky="nsew", padx=5)
-        self.stress_lbl_threads = ctk.CTkLabel(t_frame, text="Threads: 100")
-        self.stress_lbl_threads.pack(anchor="w")
-        self.stress_slider_threads = ctk.CTkSlider(
-            t_frame,
-            from_=10,
-            to=1000,
-            number_of_steps=99,
-            command=lambda v: self.stress_lbl_threads.configure(
-                text=f"Threads: {int(v)}"
-            ),
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.stress_slider_threads.set(100)
-        self.stress_slider_threads.pack(fill="x", pady=5)
-
-        # Duration slider
-        d_frame = ctk.CTkFrame(slider_row, fg_color="transparent")
-        d_frame.grid(row=0, column=1, sticky="nsew", padx=5)
-        self.stress_lbl_duration = ctk.CTkLabel(d_frame, text="Duration: 60s")
-        self.stress_lbl_duration.pack(anchor="w")
-        self.stress_slider_duration = ctk.CTkSlider(
-            d_frame,
-            from_=10,
-            to=300,
-            number_of_steps=29,
-            command=lambda v: self.stress_lbl_duration.configure(
-                text=f"Duration: {int(v)}s"
-            ),
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.stress_slider_duration.set(60)
-        self.stress_slider_duration.pack(fill="x", pady=5)
-
-        # RPS Limit slider
-        r_frame = ctk.CTkFrame(slider_row, fg_color="transparent")
-        r_frame.grid(row=0, column=2, sticky="nsew", padx=5)
-        self.stress_lbl_rps = ctk.CTkLabel(r_frame, text="RPS Limit: Unlimited")
-        self.stress_lbl_rps.pack(anchor="w")
-        self.stress_slider_rps = ctk.CTkSlider(
-            r_frame,
-            from_=0,
-            to=10000,
-            number_of_steps=100,
-            command=self.update_stress_rps_label,
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.stress_slider_rps.set(0)
-        self.stress_slider_rps.pack(fill="x", pady=5)
-
-        # Button Row
-        btn_row = ctk.CTkFrame(cfg_frame, fg_color="transparent")
-        btn_row.pack(fill="x", padx=20, pady=20)
-
-        self.btn_stress_start = ctk.CTkButton(
-            btn_row,
-            text="🚀 START STRESS TEST",
-            height=scaled(40),
-            fg_color=COLORS["success"],
-            font=("Roboto", scaled(13), "bold"),
-            command=self.toggle_stress_test,
-        )
-        self.btn_stress_start.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        self.btn_stress_pause = ctk.CTkButton(
-            btn_row,
-            text="⏸ PAUSE",
-            height=scaled(40),
-            fg_color=COLORS["warning"],
-            font=("Roboto", scaled(11), "bold"),
-            width=scaled(90),
-            command=self.toggle_stress_pause,
-        )
-        self.btn_stress_pause.pack(side="left", padx=(0, 10))
-
-        self.btn_stress_reset = ctk.CTkButton(
-            btn_row,
-            text="RESET",
-            height=scaled(40),
-            fg_color=COLORS["card"],
-            font=("Roboto", scaled(11), "bold"),
-            width=scaled(70),
-            command=self.reset_stress_stats,
-        )
-        self.btn_stress_reset.pack(side="right")
-
-        # Activity Log (row 2) - expands to fill remaining space below sash
-        log_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        log_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 0))
-        log_frame.grid_rowconfigure(1, weight=1, minsize=self._stress_log_min)
-        log_frame.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            log_frame,
-            text="Stress Test Log",
-            font=("Roboto", scaled(11)),
-            text_color=COLORS["text_dim"],
-        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
-        self.stress_log_box = ctk.CTkTextbox(log_frame, fg_color=COLORS["card"])
-        self.stress_log_box.grid(row=1, column=0, sticky="nsew")
-
-    def update_stress_rps_label(self, value):
-        """Update RPS limit label."""
-        v = int(value)
-        if v == 0:
-            self.stress_lbl_rps.configure(text="RPS Limit: Unlimited")
-        else:
-            self.stress_lbl_rps.configure(text=f"RPS Limit: {v}")
+    # ========== STRESS TEST PAGE METHODS ==========
 
     def stress_log(self, message: str):
         """Log a message to the stress test log box."""
@@ -1271,10 +370,10 @@ class ModernTrafficBot(ctk.CTk):
     def run_stress_engine(self):
         """Run the stress test engine."""
         from core.stress_engine import (
-            StressEngine,
-            StressConfig,
             AttackType,
             RequestMethod,
+            StressConfig,
+            StressEngine,
         )
 
         target_url = self.stress_entry_url.get().strip()
@@ -1412,455 +511,7 @@ class ModernTrafficBot(ctk.CTk):
 
         self.after(0, update_on_main)
 
-    def setup_settings_ui(self, parent):
-        # Sticky header with save button (outside scrollable area)
-        header = ctk.CTkFrame(parent, fg_color=COLORS["card"], height=scaled(45))
-        header.pack(fill="x", pady=(0, 10))
-        header.pack_propagate(False)  # Prevent shrinking
-
-        ctk.CTkLabel(header, text="Settings", font=("Roboto", scaled(15), "bold")).pack(
-            side="left", padx=scaled(15), pady=scaled(8)
-        )
-        self.btn_save_settings = ctk.CTkButton(
-            header,
-            text="SAVE SETTINGS",
-            width=scaled(120),
-            height=scaled(32),
-            fg_color=COLORS["success"],
-            hover_color="#27ae60",
-            font=("Roboto", scaled(11), "bold"),
-            command=self.save_cfg,
-        )
-        self.btn_save_settings.pack(side="right", padx=scaled(15), pady=scaled(6))
-
-        # Scrollable container for all settings
-        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        scroll.pack(fill="both", expand=True)
-
-        # === General Settings ===
-        general_card = ctk.CTkFrame(scroll, fg_color=COLORS["card"])
-        general_card.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(
-            general_card, text="General Settings", font=("Roboto", 14, "bold")
-        ).pack(anchor="w", padx=20, pady=(15, 10))
-
-        self.chk_headless = ctk.CTkCheckBox(
-            general_card,
-            text="Headless Mode (invisible browser)",
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("headless", True):
-            self.chk_headless.select()
-        self.chk_headless.pack(anchor="w", padx=20, pady=5)
-
-        self.chk_verify_ssl = ctk.CTkCheckBox(
-            general_card,
-            text="Verify SSL Certificates",
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("verify_ssl", True):
-            self.chk_verify_ssl.select()
-        self.chk_verify_ssl.pack(anchor="w", padx=20, pady=(5, 15))
-
-        # === Browser Settings (Collapsible) ===
-        browser_card = ctk.CTkFrame(scroll, fg_color=COLORS["card"])
-        browser_card.pack(fill="x", pady=(0, 10))
-
-        # Header with expand/collapse button
-        browser_header = ctk.CTkFrame(browser_card, fg_color="transparent")
-        browser_header.pack(fill="x", padx=20, pady=(15, 5))
-        ctk.CTkLabel(
-            browser_header, text="Browser Settings", font=("Roboto", scaled(14), "bold")
-        ).pack(side="left")
-        self.btn_browser_expand = ctk.CTkButton(
-            browser_header,
-            text="▼ Expand Paths",
-            width=scaled(120),
-            height=scaled(24),
-            fg_color=COLORS["nav"],
-            command=self.toggle_browser_paths,
-        )
-        self.btn_browser_expand.pack(side="right")
-
-        # Browser selector
-        select_frame = ctk.CTkFrame(browser_card, fg_color="transparent")
-        select_frame.pack(fill="x", padx=20, pady=5)
-        ctk.CTkLabel(select_frame, text="Browser:").pack(side="left")
-        self.combo_browser = ctk.CTkComboBox(
-            select_frame,
-            values=["Auto", "Chrome", "Chromium", "Edge", "Brave", "Firefox", "Other"],
-            width=scaled(120),
-        )
-        self.combo_browser.set(self.settings.get("browser_selected", "auto").title())
-        self.combo_browser.pack(side="left", padx=10)
-        ctk.CTkButton(
-            select_frame,
-            text="Detect All",
-            width=scaled(80),
-            fg_color=COLORS["accent"],
-            command=self.detect_all_browsers,
-        ).pack(side="right")
-
-        # Collapsible browser paths frame (hidden by default)
-        self.browser_paths_frame = ctk.CTkFrame(browser_card, fg_color=COLORS["nav"])
-        self.browser_paths_visible = False  # Track visibility
-
-        # Chrome path
-        chrome_frame = ctk.CTkFrame(self.browser_paths_frame, fg_color="transparent")
-        chrome_frame.pack(fill="x", padx=10, pady=3)
-        ctk.CTkLabel(chrome_frame, text="Chrome:", width=scaled(70), anchor="w").pack(
-            side="left"
-        )
-        self.entry_chrome_path = ctk.CTkEntry(
-            chrome_frame, placeholder_text="Auto-detect"
-        )
-        self.entry_chrome_path.pack(side="left", fill="x", expand=True, padx=5)
-        self.entry_chrome_path.insert(0, self.settings.get("browser_chrome_path", ""))
-        ctk.CTkButton(
-            chrome_frame,
-            text="...",
-            width=scaled(30),
-            fg_color=COLORS["accent"],
-            command=lambda: self.browse_browser_path(self.entry_chrome_path),
-        ).pack(side="right")
-
-        # Chromium path (open-source / Playwright bundled)
-        chromium_frame = ctk.CTkFrame(self.browser_paths_frame, fg_color="transparent")
-        chromium_frame.pack(fill="x", padx=10, pady=3)
-        ctk.CTkLabel(
-            chromium_frame, text="Chromium:", width=scaled(70), anchor="w"
-        ).pack(side="left")
-        self.entry_chromium_path = ctk.CTkEntry(
-            chromium_frame, placeholder_text="Auto-detect"
-        )
-        self.entry_chromium_path.pack(side="left", fill="x", expand=True, padx=5)
-        self.entry_chromium_path.insert(
-            0, self.settings.get("browser_chromium_path", "")
-        )
-        ctk.CTkButton(
-            chromium_frame,
-            text="...",
-            width=scaled(30),
-            fg_color=COLORS["accent"],
-            command=lambda: self.browse_browser_path(self.entry_chromium_path),
-        ).pack(side="right")
-
-        # Edge path
-        edge_frame = ctk.CTkFrame(self.browser_paths_frame, fg_color="transparent")
-        edge_frame.pack(fill="x", padx=10, pady=3)
-        ctk.CTkLabel(edge_frame, text="Edge:", width=scaled(70), anchor="w").pack(
-            side="left"
-        )
-        self.entry_edge_path = ctk.CTkEntry(edge_frame, placeholder_text="Auto-detect")
-        self.entry_edge_path.pack(side="left", fill="x", expand=True, padx=5)
-        self.entry_edge_path.insert(0, self.settings.get("browser_edge_path", ""))
-        ctk.CTkButton(
-            edge_frame,
-            text="...",
-            width=scaled(30),
-            fg_color=COLORS["accent"],
-            command=lambda: self.browse_browser_path(self.entry_edge_path),
-        ).pack(side="right")
-
-        # Brave path
-        brave_frame = ctk.CTkFrame(self.browser_paths_frame, fg_color="transparent")
-        brave_frame.pack(fill="x", padx=10, pady=3)
-        ctk.CTkLabel(brave_frame, text="Brave:", width=scaled(70), anchor="w").pack(
-            side="left"
-        )
-        self.entry_brave_path = ctk.CTkEntry(
-            brave_frame, placeholder_text="Auto-detect"
-        )
-        self.entry_brave_path.pack(side="left", fill="x", expand=True, padx=5)
-        self.entry_brave_path.insert(0, self.settings.get("browser_brave_path", ""))
-        ctk.CTkButton(
-            brave_frame,
-            text="...",
-            width=scaled(30),
-            fg_color=COLORS["accent"],
-            command=lambda: self.browse_browser_path(self.entry_brave_path),
-        ).pack(side="right")
-
-        # Firefox path
-        firefox_frame = ctk.CTkFrame(self.browser_paths_frame, fg_color="transparent")
-        firefox_frame.pack(fill="x", padx=10, pady=3)
-        ctk.CTkLabel(firefox_frame, text="Firefox:", width=scaled(70), anchor="w").pack(
-            side="left"
-        )
-        self.entry_firefox_path = ctk.CTkEntry(
-            firefox_frame, placeholder_text="Auto-detect"
-        )
-        self.entry_firefox_path.pack(side="left", fill="x", expand=True, padx=5)
-        self.entry_firefox_path.insert(0, self.settings.get("browser_firefox_path", ""))
-        ctk.CTkButton(
-            firefox_frame,
-            text="...",
-            width=scaled(30),
-            fg_color=COLORS["accent"],
-            command=lambda: self.browse_browser_path(self.entry_firefox_path),
-        ).pack(side="right")
-
-        # Other browser path
-        other_frame = ctk.CTkFrame(self.browser_paths_frame, fg_color="transparent")
-        other_frame.pack(fill="x", padx=10, pady=(3, 10))
-        ctk.CTkLabel(other_frame, text="Other:", width=scaled(70), anchor="w").pack(
-            side="left"
-        )
-        self.entry_other_path = ctk.CTkEntry(
-            other_frame, placeholder_text="Custom browser path"
-        )
-        self.entry_other_path.pack(side="left", fill="x", expand=True, padx=5)
-        self.entry_other_path.insert(0, self.settings.get("browser_other_path", ""))
-        ctk.CTkButton(
-            other_frame,
-            text="...",
-            width=scaled(30),
-            fg_color=COLORS["accent"],
-            command=lambda: self.browse_browser_path(self.entry_other_path),
-        ).pack(side="right")
-
-        # Browser contexts slider
-        ctx_frame = ctk.CTkFrame(browser_card, fg_color="transparent")
-        ctx_frame.pack(fill="x", padx=20, pady=5)
-        self.lbl_contexts = ctk.CTkLabel(
-            ctx_frame,
-            text=f"Browser Contexts: {self.settings.get('browser_contexts', 5)}",
-        )
-        self.lbl_contexts.pack(anchor="w")
-        self.slider_contexts = ctk.CTkSlider(
-            ctx_frame,
-            from_=1,
-            to=10,
-            number_of_steps=9,
-            command=lambda v: self.lbl_contexts.configure(
-                text=f"Browser Contexts: {int(v)}"
-            ),
-            button_color=COLORS["accent"],
-            button_hover_color=COLORS["accent_hover"],
-        )
-        self.slider_contexts.set(self.settings.get("browser_contexts", 5))
-        self.slider_contexts.pack(fill="x", pady=2)
-
-        self.chk_stealth = ctk.CTkCheckBox(
-            browser_card,
-            text="Enable Stealth Mode (anti-detection)",
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("browser_stealth", True):
-            self.chk_stealth.select()
-        self.chk_stealth.pack(anchor="w", padx=20, pady=(5, 15))
-
-        # === Captcha Solving (Multi-Provider) ===
-        captcha_card = ctk.CTkFrame(scroll, fg_color=COLORS["card"])
-        captcha_card.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(
-            captcha_card, text="Captcha Solving", font=("Roboto", scaled(14), "bold")
-        ).pack(anchor="w", padx=20, pady=(15, 10))
-
-        # Primary provider selector
-        provider_frame = ctk.CTkFrame(captcha_card, fg_color="transparent")
-        provider_frame.pack(fill="x", padx=20, pady=5)
-        ctk.CTkLabel(provider_frame, text="Primary:").pack(side="left")
-        self.combo_captcha_primary = ctk.CTkComboBox(
-            provider_frame,
-            values=["Auto", "2captcha", "AntiCaptcha", "None"],
-            width=scaled(120),
-        )
-        primary = self.settings.get("captcha_primary", "auto")
-        self.combo_captcha_primary.set(
-            "Auto" if primary == "auto" else ("None" if primary == "none" else primary)
-        )
-        self.combo_captcha_primary.pack(side="left", padx=10)
-
-        self.chk_captcha_fallback = ctk.CTkCheckBox(
-            provider_frame,
-            text="Fallback on failure",
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("captcha_fallback_enabled", True):
-            self.chk_captcha_fallback.select()
-        self.chk_captcha_fallback.pack(side="right", padx=10)
-
-        # 2captcha API Key
-        key_2cap_frame = ctk.CTkFrame(captcha_card, fg_color="transparent")
-        key_2cap_frame.pack(fill="x", padx=20, pady=5)
-        ctk.CTkLabel(
-            key_2cap_frame, text="2captcha Key:", width=scaled(100), anchor="w"
-        ).pack(side="left")
-        self.entry_2captcha_key = ctk.CTkEntry(
-            key_2cap_frame, placeholder_text="Enter 2captcha API key", show="*"
-        )
-        self.entry_2captcha_key.pack(side="left", fill="x", expand=True, padx=5)
-        self.entry_2captcha_key.insert(0, self.settings.get("captcha_2captcha_key", ""))
-
-        # AntiCaptcha API Key
-        key_anti_frame = ctk.CTkFrame(captcha_card, fg_color="transparent")
-        key_anti_frame.pack(fill="x", padx=20, pady=5)
-        ctk.CTkLabel(
-            key_anti_frame, text="AntiCaptcha Key:", width=scaled(100), anchor="w"
-        ).pack(side="left")
-        self.entry_anticaptcha_key = ctk.CTkEntry(
-            key_anti_frame, placeholder_text="Enter AntiCaptcha API key", show="*"
-        )
-        self.entry_anticaptcha_key.pack(side="left", fill="x", expand=True, padx=5)
-        self.entry_anticaptcha_key.insert(
-            0, self.settings.get("captcha_anticaptcha_key", "")
-        )
-
-        # Check balance button and status
-        balance_frame = ctk.CTkFrame(captcha_card, fg_color="transparent")
-        balance_frame.pack(fill="x", padx=20, pady=(5, 15))
-        ctk.CTkButton(
-            balance_frame,
-            text="Check Balances",
-            width=scaled(120),
-            fg_color=COLORS["accent"],
-            command=self.check_captcha_balance,
-        ).pack(side="left")
-        self.lbl_captcha_balance = ctk.CTkLabel(
-            balance_frame, text="", text_color=COLORS["text_dim"]
-        )
-        self.lbl_captcha_balance.pack(side="left", padx=15)
-
-        # === Protection Bypass ===
-        bypass_card = ctk.CTkFrame(scroll, fg_color=COLORS["card"])
-        bypass_card.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(
-            bypass_card, text="Protection Bypass", font=("Roboto", scaled(14), "bold")
-        ).pack(anchor="w", padx=20, pady=(15, 10))
-
-        self.chk_cloudflare = ctk.CTkCheckBox(
-            bypass_card,
-            text="Cloudflare Bypass",
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("cloudflare_bypass", True):
-            self.chk_cloudflare.select()
-        self.chk_cloudflare.pack(anchor="w", padx=20, pady=5)
-
-        self.chk_akamai = ctk.CTkCheckBox(
-            bypass_card,
-            text="Akamai Bypass",
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("akamai_bypass", True):
-            self.chk_akamai.select()
-        self.chk_akamai.pack(anchor="w", padx=20, pady=5)
-
-        self.chk_auto_captcha = ctk.CTkCheckBox(
-            bypass_card,
-            text="Auto-solve Captchas (requires API key)",
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        )
-        if self.settings.get("auto_solve_captcha", True):
-            self.chk_auto_captcha.select()
-        self.chk_auto_captcha.pack(anchor="w", padx=20, pady=(5, 15))
-
-        # Cloudflare wait time
-        wait_frame = ctk.CTkFrame(bypass_card, fg_color="transparent")
-        wait_frame.pack(fill="x", padx=20, pady=(0, 15))
-        ctk.CTkLabel(wait_frame, text="Cloudflare Wait (seconds):").pack(side="left")
-        self.entry_cf_wait = ctk.CTkEntry(wait_frame, width=scaled(60))
-        self.entry_cf_wait.insert(0, str(self.settings.get("cloudflare_wait", 10)))
-        self.entry_cf_wait.pack(side="left", padx=10)
-
-        # === Proxy Validators ===
-        validator_card = ctk.CTkFrame(scroll, fg_color=COLORS["card"])
-        validator_card.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(
-            validator_card, text="Proxy Validators", font=("Roboto", scaled(14), "bold")
-        ).pack(anchor="w", padx=20, pady=(15, 5))
-        ctk.CTkLabel(
-            validator_card,
-            text="Select endpoints for anonymity testing",
-            font=("Roboto", scaled(10)),
-            text_color=COLORS["text_dim"],
-        ).pack(anchor="w", padx=20, pady=(0, 10))
-
-        # Test depth selector
-        depth_frame = ctk.CTkFrame(validator_card, fg_color="transparent")
-        depth_frame.pack(fill="x", padx=20, pady=(0, 10))
-        ctk.CTkLabel(depth_frame, text="Test Depth:").pack(side="left")
-        self.combo_test_depth = ctk.CTkComboBox(
-            depth_frame, values=["Quick", "Normal", "Thorough"], width=scaled(100)
-        )
-        current_depth = self.settings.get("validator_test_depth", "quick").title()
-        self.combo_test_depth.set(current_depth)
-        self.combo_test_depth.pack(side="left", padx=10)
-        ctk.CTkLabel(
-            depth_frame,
-            text="(Quick=1, Normal=3, Thorough=All)",
-            font=("Roboto", scaled(10)),
-            text_color=COLORS["text_dim"],
-        ).pack(side="left", padx=5)
-
-        # Validator checkboxes
-        self.validator_checkboxes = {}
-        validators_enabled = self.settings.get("validators_enabled", {})
-
-        validators_frame = ctk.CTkFrame(validator_card, fg_color=COLORS["nav"])
-        validators_frame.pack(fill="x", padx=20, pady=(0, 15))
-
-        for validator in DEFAULT_VALIDATORS:
-            v_frame = ctk.CTkFrame(validators_frame, fg_color="transparent")
-            v_frame.pack(fill="x", padx=10, pady=3)
-
-            chk = ctk.CTkCheckBox(
-                v_frame,
-                text=validator.name,
-                width=scaled(120),
-                fg_color=COLORS["accent"],
-                hover_color=COLORS["accent_hover"],
-            )
-            if validators_enabled.get(validator.name, validator.enabled):
-                chk.select()
-            chk.pack(side="left")
-
-            ctk.CTkLabel(
-                v_frame,
-                text=f"({validator.validator_type.value})",
-                font=("Roboto", scaled(10)),
-                text_color=COLORS["text_dim"],
-            ).pack(side="left", padx=5)
-            ctk.CTkLabel(
-                v_frame,
-                text=validator.description,
-                font=("Roboto", scaled(10)),
-                text_color=COLORS["text_dim"],
-            ).pack(side="right", padx=10)
-
-            self.validator_checkboxes[validator.name] = chk
-
-        # === Save Button ===
-        ctk.CTkButton(
-            scroll,
-            text="Save Configuration",
-            height=scaled(40),
-            fg_color=COLORS["success"],
-            font=("Roboto", scaled(12), "bold"),
-            command=self.save_cfg,
-        ).pack(fill="x", pady=10)
-
-    def toggle_browser_paths(self):
-        """Toggle visibility of browser paths section."""
-        if self.browser_paths_visible:
-            self.browser_paths_frame.pack_forget()
-            self.btn_browser_expand.configure(text="▼ Expand Paths")
-            self.browser_paths_visible = False
-        else:
-            # Insert after the select frame but before context slider
-            self.browser_paths_frame.pack(
-                fill="x", padx=20, pady=5, after=self.combo_browser.master
-            )
-            self.btn_browser_expand.configure(text="▲ Collapse")
-            self.browser_paths_visible = True
+    # ========== SETTINGS PAGE METHODS ==========
 
     def browse_browser_path(self, entry_widget):
         """Open file dialog to select browser executable for a specific entry."""
@@ -1928,8 +579,8 @@ class ModernTrafficBot(ctk.CTk):
 
         def _check():
             try:
-                from core.models import CaptchaConfig, CaptchaProvider
                 from core.captcha_manager import CaptchaManager
+                from core.models import CaptchaConfig, CaptchaProvider
 
                 config = CaptchaConfig(
                     twocaptcha_key=key_2cap,
@@ -1970,8 +621,8 @@ class ModernTrafficBot(ctk.CTk):
             except Exception as e:
                 self.after(
                     0,
-                    lambda: self.lbl_captcha_balance.configure(
-                        text=f"Balance: Error - {e}"
+                    lambda err=e: self.lbl_captcha_balance.configure(
+                        text=f"Balance: Error - {err}"
                     ),
                 )
 
@@ -1997,15 +648,15 @@ class ModernTrafficBot(ctk.CTk):
                 self.buffer = Queue()  # Reset with fresh queue
                 self.proxy_grid.clear()
 
-                with open(f, "r") as file:
-                    for l in file:
-                        l = l.strip()
-                        if not l:
+                with open(f) as file:
+                    for line in file:
+                        line = line.strip()
+                        if not line:
                             continue
                         # Normalize: Add http:// if no protocol specified (standardizes for dedup)
-                        if "://" not in l:
-                            l = "http://" + l
-                        self.proxies.append(l)
+                        if "://" not in line:
+                            line = "http://" + line
+                        self.proxies.append(line)
 
                 self.proxies = Utils.deduplicate_proxies(self.proxies)
 
@@ -2013,7 +664,7 @@ class ModernTrafficBot(ctk.CTk):
                 self.log(
                     f"Cleared previous data. Loaded {len(self.proxies)} unique proxies."
                 )
-            except (IOError, OSError, UnicodeDecodeError) as e:
+            except (OSError, UnicodeDecodeError) as e:
                 self.log(f"Error loading proxy file: {e}")
 
     def import_from_clipboard(self):
@@ -2351,7 +1002,7 @@ class ModernTrafficBot(ctk.CTk):
                 f"Scraping started (Async) using proxy: {system_proxy if system_proxy else 'Direct'}..."
             )
             try:
-                with open(sources_file, "r") as f:
+                with open(sources_file) as f:
                     urls = [
                         line.strip()
                         for line in f
@@ -2826,6 +1477,7 @@ class ModernTrafficBot(ctk.CTk):
             pause_checker=lambda: self.testing_paused,
             validators=active_validators if active_validators else None,
             test_depth=test_depth,
+            system_proxy=system_proxy,
         )
 
         self.testing = False
@@ -2929,7 +1581,7 @@ class ModernTrafficBot(ctk.CTk):
                     continue  # Skip malformed proxy entries
 
         if not engine_proxies and all_active:
-            self.log_safe(f"Warning: Proxies active but filtered by protocol.")
+            self.log_safe("Warning: Proxies active but filtered by protocol.")
         elif not engine_proxies:
             self.log_safe("No active proxies found. Running direct.")
 
@@ -3135,9 +1787,6 @@ class ModernTrafficBot(ctk.CTk):
                 self.lbl_protection_event.configure(text=display_event)
 
         self.after(0, update_on_main_thread)
-
-    def log_safe(self, msg):
-        self.after(0, lambda: self.log(msg))
 
     def save_cfg(self):
         try:

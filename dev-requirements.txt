@@ -1,0 +1,18 @@
+# Development dependencies for DarkMatter Traffic Bot
+# Install with: pip install -r dev-requirements.txt
+
+# Code formatting
+black>=24.0.0
+
+# Linting
+ruff>=0.1.0
+
+# Type checking (optional)
+mypy>=1.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+
+# Pre-commit hooks (optional)
+pre-commit>=3.0.0

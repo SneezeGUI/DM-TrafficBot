@@ -6,34 +6,34 @@ Supports Chrome, Edge, Brave (Chromium) and Firefox browsers.
 """
 
 import asyncio
-import random
+import contextlib
 import logging
+import random
 import re
-from typing import List, Callable, Optional, Any
-from .models import TrafficConfig, ProxyConfig, TrafficStats, CaptchaProvider
+from collections.abc import Callable
+
 from .browser_manager import BrowserManager
 from .constants import (
-    get_referers,
+    AKAMAI_MARKERS,
+    BROWSER_VIEWPORTS,
+    CAPTCHA_MARKERS,
     CLOUDFLARE_MARKERS,
     CLOUDFLARE_TITLE_MARKERS,
-    TURNSTILE_MARKERS,
-    CAPTCHA_MARKERS,
-    AKAMAI_MARKERS,
-    BROWSER_USER_AGENTS,
-    BROWSER_VIEWPORTS,
-    SUCCESS_STATUS_CODES,
     OS_PROFILES,
+    SUCCESS_STATUS_CODES,
+    get_referers,
 )
+from .models import ProxyConfig, TrafficConfig, TrafficStats
 
 # Playwright imports are done lazily to avoid import errors if not installed
 playwright_available = False
 try:
     from playwright.async_api import (
-        async_playwright,
         Browser,
         BrowserContext,
         Page,
         Playwright,
+        async_playwright,
     )
 
     playwright_available = True
@@ -305,7 +305,7 @@ class PlaywrightTrafficEngine:
     """
 
     @staticmethod
-    def _filter_browser_proxies(proxies: List[ProxyConfig]) -> List[ProxyConfig]:
+    def _filter_browser_proxies(proxies: list[ProxyConfig]) -> list[ProxyConfig]:
         """
         Filter and prioritize proxies for browser mode.
 
@@ -380,9 +380,9 @@ class PlaywrightTrafficEngine:
     def __init__(
         self,
         config: TrafficConfig,
-        proxies: List[ProxyConfig],
-        on_update: Optional[Callable[[TrafficStats], None]] = None,
-        on_log: Optional[Callable[[str], None]] = None,
+        proxies: list[ProxyConfig],
+        on_update: Callable[[TrafficStats], None] | None = None,
+        on_log: Callable[[str], None] | None = None,
     ):
         """
         Initialize the browser engine.
@@ -426,11 +426,11 @@ class PlaywrightTrafficEngine:
         )
 
         # Playwright objects
-        self._playwright: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
         # Context pool: list of (context, proxy, metadata) tuples
         # metadata = {"created_at": timestamp, "request_count": int, "profile_name": str}
-        self._contexts: List[tuple] = []
+        self._contexts: list[tuple] = []
 
         # Captcha manager (lazy loaded)
         self._captcha_manager = None
@@ -521,7 +521,7 @@ class PlaywrightTrafficEngine:
             raise
 
     async def _create_context(
-        self, proxy: Optional[ProxyConfig] = None
+        self, proxy: ProxyConfig | None = None
     ) -> BrowserContext:
         """
         Create a browser context with realistic fingerprint using OS profiles.
@@ -613,7 +613,6 @@ class PlaywrightTrafficEngine:
         try:
             content = await page.content()
             title = await page.title()
-            url = page.url
 
             # Count Cloudflare markers for confidence scoring
             cf_marker_count = sum(
@@ -638,13 +637,13 @@ class PlaywrightTrafficEngine:
 
             if any(strong_cf_signals):
                 is_cloudflare = True
-                logging.debug(f"Cloudflare detected via strong signal")
+                logging.debug("Cloudflare detected via strong signal")
             elif cf_marker_count >= 2:
                 is_cloudflare = True
                 logging.debug(f"Cloudflare detected via {cf_marker_count} markers")
             elif cf_title_match and cf_marker_count >= 1:
                 is_cloudflare = True
-                logging.debug(f"Cloudflare detected via title + marker")
+                logging.debug("Cloudflare detected via title + marker")
 
             if is_cloudflare:
                 # Check for Turnstile specifically
@@ -673,7 +672,7 @@ class PlaywrightTrafficEngine:
 
         return None, None
 
-    async def _extract_turnstile_key(self, page: Page) -> Optional[str]:
+    async def _extract_turnstile_key(self, page: Page) -> str | None:
         """Extract Cloudflare Turnstile site key, including from iframes."""
         try:
             # Try direct page first
@@ -704,7 +703,7 @@ class PlaywrightTrafficEngine:
                                 r'data-sitekey=["\']([^"\']+)["\']', frame_content
                             )
                             if match:
-                                logging.debug(f"Found Turnstile key in iframe")
+                                logging.debug("Found Turnstile key in iframe")
                                 return match.group(1)
                     except Exception:
                         pass
@@ -729,7 +728,7 @@ class PlaywrightTrafficEngine:
                 """
                 )
                 if key:
-                    logging.debug(f"Found Turnstile key via JS evaluation")
+                    logging.debug("Found Turnstile key via JS evaluation")
                     return key
             except Exception:
                 pass
@@ -739,7 +738,7 @@ class PlaywrightTrafficEngine:
 
         return None
 
-    async def _extract_site_key(self, page: Page, captcha_type: str) -> Optional[str]:
+    async def _extract_site_key(self, page: Page, captcha_type: str) -> str | None:
         """Extract captcha site key from page."""
         try:
             selectors = {
@@ -810,7 +809,7 @@ class PlaywrightTrafficEngine:
             logging.debug(f"Cloudflare bypass check error: {e}")
             return False
 
-    async def _handle_cloudflare(self, page: Page, site_key: Optional[str]) -> bool:
+    async def _handle_cloudflare(self, page: Page, site_key: str | None) -> bool:
         """
         Handle Cloudflare challenge with multi-stage bypass strategy.
 
@@ -847,7 +846,7 @@ class PlaywrightTrafficEngine:
             self._notify_update()
 
             # Wait in intervals, checking for bypass between each
-            for wait_round in range(3):
+            for _wait_round in range(3):
                 wait_time = min(3, max_wait_seconds - (self._time.time() - start_time))
                 if wait_time <= 0:
                     break
@@ -936,7 +935,7 @@ class PlaywrightTrafficEngine:
                         self._log("Turnstile token received, injecting...")
 
                         # Inject solution token
-                        injected = await page.evaluate(
+                        await page.evaluate(
                             f"""
                             () => {{
                                 // Try multiple injection methods
@@ -990,10 +989,9 @@ class PlaywrightTrafficEngine:
 
                         await asyncio.sleep(2)
 
-                        try:
+                        # May timeout, that's ok
+                        with contextlib.suppress(Exception):
                             await page.wait_for_load_state("networkidle", timeout=10000)
-                        except Exception:
-                            pass  # May timeout, that's ok
 
                         # Final verification
                         if await self._check_cloudflare_bypassed(page):
@@ -1120,10 +1118,8 @@ class PlaywrightTrafficEngine:
         # Find and remove the context from our pool
         for i, (ctx, ctx_proxy, _meta) in enumerate(self._contexts):
             if ctx_proxy == proxy:
-                try:
+                with contextlib.suppress(Exception):
                     await ctx.close()
-                except Exception:
-                    pass
                 self._contexts.pop(i)
                 logging.debug(
                     f"Closed context for dead proxy {proxy.host}:{proxy.port}"
@@ -1175,7 +1171,7 @@ class PlaywrightTrafficEngine:
 
         contexts_to_rotate = []
 
-        for i, (ctx, proxy, meta) in enumerate(self._contexts):
+        for i, (_ctx, _proxy, meta) in enumerate(self._contexts):
             # Check request count threshold
             if meta["request_count"] >= rotation_requests:
                 contexts_to_rotate.append(i)
@@ -1192,11 +1188,9 @@ class PlaywrightTrafficEngine:
             old_profile = meta.get("profile_name", "Unknown")
             old_requests = meta["request_count"]
 
-            try:
-                # Close old context
+            # Close old context
+            with contextlib.suppress(Exception):
                 await ctx.close()
-            except Exception:
-                pass
 
             # Create new context with fresh fingerprint
             try:
@@ -1295,7 +1289,7 @@ class PlaywrightTrafficEngine:
         return False
 
     async def _make_request(
-        self, context: BrowserContext, proxy: Optional[ProxyConfig] = None
+        self, context: BrowserContext, proxy: ProxyConfig | None = None
     ):
         """
         Perform a single browser visit.
@@ -1341,12 +1335,11 @@ class PlaywrightTrafficEngine:
                         # After bypass, the page should have navigated to actual content
                         try:
                             # Check current URL and verify it's not still a challenge
-                            final_url = page.url
                             if await self._check_cloudflare_bypassed(page):
                                 success = True
                             else:
                                 logging.debug(
-                                    f"CF bypass reported success but page verification failed"
+                                    "CF bypass reported success but page verification failed"
                                 )
                                 success = False
                         except Exception as e:
@@ -1450,10 +1443,8 @@ class PlaywrightTrafficEngine:
 
         finally:
             if page:
-                try:
+                with contextlib.suppress(Exception):
                     await page.close()
-                except Exception:
-                    pass
 
             self.stats.active_threads -= 1
 
@@ -1575,10 +1566,8 @@ class PlaywrightTrafficEngine:
             # Cancel balance check task
             if balance_task and not balance_task.done():
                 balance_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await balance_task
-                except asyncio.CancelledError:
-                    pass
 
             # Cleanup
             await self._cleanup()
@@ -1590,26 +1579,20 @@ class PlaywrightTrafficEngine:
         """Clean up browser resources."""
         # Close contexts
         for context, _proxy, _meta in self._contexts:
-            try:
+            with contextlib.suppress(Exception):
                 await context.close()
-            except Exception:
-                pass
         self._contexts.clear()
 
         # Close browser
         if self._browser:
-            try:
+            with contextlib.suppress(Exception):
                 await self._browser.close()
-            except Exception:
-                pass
             self._browser = None
 
         # Stop playwright
         if self._playwright:
-            try:
+            with contextlib.suppress(Exception):
                 await self._playwright.stop()
-            except Exception:
-                pass
             self._playwright = None
 
     def stop(self):

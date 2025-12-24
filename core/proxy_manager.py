@@ -1,28 +1,28 @@
-import re
-import time
 import logging
 import os
-import requests as std_requests
-from typing import List, Callable, Optional, Set, Dict
+import re
+import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+
+import requests as std_requests
 from curl_cffi import requests
-from .header_manager import HeaderManager
-from .models import ProxyConfig, ProxyCheckResult
+
 from .constants import (
-    SCRAPE_TIMEOUT_SECONDS,
-    PROXY_CHECK_BATCH_SIZE,
     DEAD_PROXY_SPEED_MS,
+    PROXY_CHECK_BATCH_SIZE,
+    SCRAPE_TIMEOUT_SECONDS,
 )
+from .header_manager import HeaderManager
+from .models import ProxyCheckResult, ProxyConfig
 from .validators import (
-    DEFAULT_VALIDATORS,
     Validator,
     ValidatorResult,
     aggregate_results,
-    AggregatedResult,
 )
 
 # GeoIP cache to avoid repeated lookups
-_geoip_cache: Dict[str, dict] = {}
+_geoip_cache: dict[str, dict] = {}
 
 # MaxMind GeoLite2 database reader (lazy loaded)
 _geoip_reader = None
@@ -81,7 +81,7 @@ def _init_geoip_reader():
         return None
 
 
-def _lookup_geoip_local(ip: str) -> Optional[dict]:
+def _lookup_geoip_local(ip: str) -> dict | None:
     """
     Look up geographic information using local MaxMind database.
     Returns dict or None if lookup fails.
@@ -223,101 +223,20 @@ def lookup_geoip(ip: str) -> dict:
     return result
 
 
-def detect_anonymity(response_data: dict, real_ip: str, proxy_ip: str) -> str:
-    """
-    Detect proxy anonymity level based on response headers and origin.
-
-    Levels:
-    - Elite (L1): No proxy detection, real IP completely hidden
-    - Anonymous (L2): Proxy detected but real IP hidden
-    - Transparent (L3): Real IP is exposed
-    - Unknown: Cannot determine (response missing required fields)
-
-    Args:
-        response_data: JSON response from httpbin-like service (e.g., /get, /ip)
-        real_ip: The user's real IP address
-        proxy_ip: The proxy's IP address
-
-    Returns:
-        Anonymity level string
-
-    Note:
-        For accurate detection, use test URLs that return origin/headers like:
-        - https://httpbin.org/get
-        - https://httpbin.org/ip
-        NOT https://httpbin.org/json (doesn't return needed fields)
-    """
-    # Check if response has the fields we need for detection
-    origin = response_data.get("origin", "")
-    headers = response_data.get("headers", {})
-
-    # If response doesn't have origin OR headers, we can't reliably detect
-    # This happens with endpoints like /json that don't return this data
-    has_detection_data = bool(origin) or bool(headers)
-
-    if not has_detection_data:
-        return "Unknown"
-
-    # If real IP appears in origin, it's transparent
-    if real_ip and origin and real_ip in origin:
-        return "Transparent"
-
-    # Headers that expose real IP (Transparent)
-    ip_exposing_headers = [
-        "X-Forwarded-For",
-        "X-Real-Ip",
-        "X-Client-Ip",
-        "Client-Ip",
-        "Forwarded",
-        "Cf-Connecting-Ip",
-        "True-Client-Ip",
-    ]
-
-    for header in ip_exposing_headers:
-        value = headers.get(header, "")
-        if value:
-            # Check if real IP is exposed
-            if real_ip and real_ip in value:
-                return "Transparent"
-            # Header exists with some value but not our IP - Anonymous
-            # (proxy is adding forwarding headers but hiding real IP)
-
-    # Headers that indicate proxy usage (Anonymous)
-    proxy_revealing_headers = [
-        "Via",
-        "X-Forwarded-For",
-        "X-Proxy-Id",
-        "Proxy-Connection",
-        "X-Bluecoat-Via",
-        "Proxy-Authenticate",
-        "Proxy-Authorization",
-    ]
-
-    for header in proxy_revealing_headers:
-        if headers.get(header):
-            return "Anonymous"
-
-    # Has detection data but no proxy indicators found - Elite
-    if has_detection_data:
-        return "Elite"
-
-    return "Unknown"
-
-
 class ThreadedProxyManager:
     def __init__(self):
         self.regex_pattern = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}\b")
 
     def scrape(
         self,
-        sources: List[str],
-        protocols: List[str],
+        sources: list[str],
+        protocols: list[str],
         max_threads: int = 20,
         scraper_proxy: str = None,
         on_progress: Callable[[int], None] = None,
-    ) -> List[ProxyConfig]:
+    ) -> list[ProxyConfig]:
         """Scrapes proxies from provided source URLs using threads."""
-        found_proxies: Set[tuple] = set()
+        found_proxies: set[tuple] = set()
 
         def fetch_source(url: str):
             try:
@@ -378,22 +297,26 @@ class ThreadedProxyManager:
 
     def check_proxies(
         self,
-        proxies: List[ProxyConfig],
+        proxies: list[ProxyConfig],
         target_url: str,
         timeout_ms: int,
         real_ip: str,
         on_progress: Callable[[ProxyCheckResult, int, int], None],
         concurrency: int = 100,
-        pause_checker: Optional[Callable[[], bool]] = None,
-        validators: Optional[List[Validator]] = None,
+        pause_checker: Callable[[], bool] | None = None,
+        validators: list[Validator] | None = None,
         test_depth: str = "quick",
-    ) -> List[ProxyCheckResult]:
+        system_proxy: str | None = None,
+    ) -> list[ProxyCheckResult]:
         """
         Checks a list of proxies concurrently using threads.
+
+        Args:
+            system_proxy: Optional system proxy URL to route checking through (proxy chaining).
+                         Format: "protocol://host:port" (e.g., "socks5://127.0.0.1:1080")
         """
         total = len(proxies)
         completed = 0
-        valid_results = []
         lock = logging.threading.Lock()  # Simple lock for counter
 
         # Determine which validators to use based on test_depth
@@ -416,7 +339,7 @@ class ThreadedProxyManager:
                     time.sleep(0.5)
 
             result = self._test_proxy(
-                proxy, target_url, timeout_ms, real_ip, active_validators
+                proxy, target_url, timeout_ms, real_ip, active_validators, system_proxy
             )
 
             with lock:
@@ -463,11 +386,14 @@ class ThreadedProxyManager:
         return valid_results_list
 
     def _test_proxy_alive(
-        self, proxy: ProxyConfig, target_url: str, timeout_ms: int
+        self, proxy: ProxyConfig, target_url: str, timeout_ms: int, system_proxy: str | None = None
     ) -> ProxyCheckResult:
         """
         Phase 1: Quick alive check - tests connectivity, speed, type, and GeoIP.
         Does NOT run validator API checks (saves bandwidth for dead proxies).
+
+        Args:
+            system_proxy: Optional system proxy for proxy chaining. Routes the check through this proxy.
         """
         result = ProxyCheckResult(
             proxy=proxy,
@@ -482,6 +408,18 @@ class ThreadedProxyManager:
 
         proxy_url = proxy.to_curl_cffi_format()
         proxies_dict = {"http": proxy_url, "https": proxy_url}
+
+        # TODO v3.7.0: Implement true proxy chaining for checking
+        # Requires SOCKS5 nested proxy support: slave -> master_proxy -> test_proxy -> target
+        # Current limitation: curl_cffi doesn't support nested proxies natively
+        # For now, system_proxy is only used for scraping (which works correctly)
+        if system_proxy:
+            logging.info(
+                "Note: system_proxy is currently only supported for scraping. "
+                "Proxy checking tests proxies directly. "
+                "Full proxy chaining will be implemented in v3.7.0 with SOCKS5 support."
+            )
+
         timeout_sec = max(timeout_ms / 1000, 1.0)
 
         bytes_transferred = 0
@@ -538,8 +476,18 @@ class ThreadedProxyManager:
                         logging.debug(
                             f"Proxy {proxy.host}:{proxy.port} exit IP: {proxy_exit_ip}"
                         )
-                except (ValueError, KeyError, AttributeError) as e:
-                    logging.debug(f"Failed to extract exit IP from response: {e}")
+                    else:
+                        logging.debug(
+                            "JSON response missing 'origin' field. "
+                            "Consider using a URL like https://httpbin.org/get"
+                        )
+                except (ValueError, KeyError, AttributeError, requests.exceptions.JSONDecodeError) as e:
+                    # Non-JSON response is common during proxy testing (failures, error pages, etc.)
+                    # Only log at debug level since fallback to proxy host IP works fine
+                    logging.debug(
+                        f"Test URL did not return valid JSON (expected during proxy failures). "
+                        f"Falling back to proxy host IP for GeoIP. Error: {e}"
+                    )
 
                 # GeoIP lookup - try exit IP first, fallback to proxy host IP
                 lookup_ip = proxy_exit_ip or proxy.host
@@ -573,11 +521,15 @@ class ThreadedProxyManager:
         result: ProxyCheckResult,
         real_ip: str,
         timeout_ms: int,
-        validators: List[Validator],
+        validators: list[Validator],
+        system_proxy: str | None = None,
     ) -> ProxyCheckResult:
         """
         Phase 2: Anonymity check - runs validator API checks on confirmed-alive proxies.
         Only called for proxies that passed the alive check.
+
+        Args:
+            system_proxy: Optional system proxy for routing validator checks (proxy chaining)
         """
         if result.status != "Active":
             return result
@@ -585,6 +537,10 @@ class ThreadedProxyManager:
         proxy = result.proxy
         proxy_url = proxy.to_curl_cffi_format()
         proxies_dict = {"http": proxy_url, "https": proxy_url}
+
+        # Note: system_proxy parameter exists for future SOCKS5 chaining support
+        # Currently ignored for anonymity checks (tests proxy directly)
+
         timeout_sec = max(timeout_ms / 1000, 1.0)
 
         proxy_exit_ip = getattr(result, "_exit_ip", None)
@@ -641,18 +597,22 @@ class ThreadedProxyManager:
         target_url: str,
         timeout_ms: int,
         real_ip: str,
-        validators: Optional[List[Validator]] = None,
+        validators: list[Validator] | None = None,
+        system_proxy: str | None = None,
     ) -> ProxyCheckResult:
         """
         Full proxy test: Phase 1 (alive) + Phase 2 (anonymity) combined.
         Validators only run if proxy passes alive check.
+
+        Args:
+            system_proxy: Optional system proxy for proxy chaining (routes checking through this proxy)
         """
         # Phase 1: Quick alive check
-        result = self._test_proxy_alive(proxy, target_url, timeout_ms)
+        result = self._test_proxy_alive(proxy, target_url, timeout_ms, system_proxy)
 
         # Phase 2: Only check anonymity if proxy is alive
         if result.status == "Active" and validators:
-            result = self._test_proxy_anonymity(result, real_ip, timeout_ms, validators)
+            result = self._test_proxy_anonymity(result, real_ip, timeout_ms, validators, system_proxy)
         elif result.status == "Active":
             # No validators - use simple anonymity detection
             proxy_exit_ip = getattr(result, "_exit_ip", None)
@@ -679,7 +639,7 @@ class ThreadedProxyManager:
         session,
         proxy: ProxyConfig,
         proxies_dict: dict,
-        validators: List[Validator],
+        validators: list[Validator],
         timeout_sec: float,
         real_ip: str,
     ) -> tuple:

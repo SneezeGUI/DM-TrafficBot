@@ -1,8 +1,10 @@
 import json
-import random
-import os
 import logging
+import os
+import random
+
 from fake_useragent import UserAgent
+
 
 class HeaderManager:
     _instance = None
@@ -12,7 +14,7 @@ class HeaderManager:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(HeaderManager, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._load_profiles()
             if not cls._profiles_pool: # Only try user-agents.txt if profiles failed
                 cls._load_user_agents_txt()
@@ -27,7 +29,7 @@ class HeaderManager:
         path = "resources/user-agents/header_profiles.json"
         if os.path.exists(path):
             try:
-                with open(path, "r") as f:
+                with open(path) as f:
                     data = json.load(f)
                     for entry in data:
                         # Ensure 'user_agent' is present and merge into 'headers' if separate
@@ -35,19 +37,19 @@ class HeaderManager:
                         headers = entry.get("headers", {})
                         if ua and "User-Agent" not in headers:
                             headers["User-Agent"] = ua
-                        
+
                         # Store the combined headers (profile)
                         if headers and "User-Agent" in headers:
                             cls._profiles_pool.append(headers)
             except Exception as e:
                 logging.warning(f"Error loading header profiles: {e}")
-        
+
     @classmethod
     def _load_user_agents_txt(cls):
         path = "resources/user-agents/user-agents.txt"
         if os.path.exists(path):
             try:
-                with open(path, "r") as f:
+                with open(path) as f:
                     for line in f:
                         ua = line.strip()
                         if ua:
@@ -60,7 +62,7 @@ class HeaderManager:
         """Returns a dict of headers."""
         if cls._profiles_pool:
             return random.choice(cls._profiles_pool)
-        
+
         if cls._user_agents_pool:
             ua = random.choice(cls._user_agents_pool)
             return {
@@ -68,7 +70,7 @@ class HeaderManager:
                 "Accept": "*/*",
                 "Connection": "keep-alive"
             }
-        
+
         # Fallback generation using fake_useragent lib
         ua = cls._ua_fallback_lib.random if cls._ua_fallback_lib else "Mozilla/5.0"
         return {

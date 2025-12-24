@@ -3,10 +3,9 @@ Captcha solving integration for 2captcha and AntiCaptcha services.
 Supports Cloudflare Turnstile, reCAPTCHA v2/v3, and hCaptcha.
 """
 import asyncio
-import time
 import logging
+import time
 from abc import ABC, abstractmethod
-from typing import Optional
 from dataclasses import dataclass
 
 # aiohttp is optional - check availability
@@ -22,8 +21,8 @@ except ImportError:
 class CaptchaSolution:
     """Result of a captcha solve attempt."""
     success: bool
-    token: Optional[str] = None
-    error: Optional[str] = None
+    token: str | None = None
+    error: str | None = None
     solve_time_ms: int = 0
 
 
@@ -75,7 +74,7 @@ class TwoCaptchaSolver(CaptchaSolverBase):
 
     BASE_URL = "https://2captcha.com"
 
-    async def _submit_task(self, session: aiohttp.ClientSession, params: dict) -> Optional[str]:
+    async def _submit_task(self, session: aiohttp.ClientSession, params: dict) -> str | None:
         """Submit a captcha task and return task ID."""
         params["key"] = self.api_key
         params["json"] = 1
@@ -206,7 +205,7 @@ class AntiCaptchaSolver(CaptchaSolverBase):
 
     BASE_URL = "https://api.anti-captcha.com"
 
-    async def _create_task(self, session: aiohttp.ClientSession, task: dict) -> Optional[int]:
+    async def _create_task(self, session: aiohttp.ClientSession, task: dict) -> int | None:
         """Create a task and return task ID."""
         payload = {
             "clientKey": self.api_key,
@@ -335,7 +334,7 @@ class AntiCaptchaSolver(CaptchaSolverBase):
             return 0.0
 
 
-def create_solver(provider: str, api_key: str, timeout: int = 120) -> Optional[CaptchaSolverBase]:
+def create_solver(provider: str, api_key: str, timeout: int = 120) -> CaptchaSolverBase | None:
     """
     Factory function to create appropriate captcha solver.
 

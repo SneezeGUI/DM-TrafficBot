@@ -4,20 +4,19 @@ Handles provider selection based on captcha type and automatic fallback on failu
 """
 
 import logging
-from typing import Optional, Dict
-from .models import CaptchaConfig, CaptchaProvider, CaptchaType
+
 from .captcha_solver import (
+    AntiCaptchaSolver,
     CaptchaSolution,
     CaptchaSolverBase,
     TwoCaptchaSolver,
-    AntiCaptchaSolver,
     aiohttp_available,
 )
-
+from .models import CaptchaConfig, CaptchaProvider, CaptchaType
 
 # Provider strengths/preferences by captcha type
 # Based on general reliability and speed for each captcha type
-PROVIDER_PREFERENCES: Dict[CaptchaType, list] = {
+PROVIDER_PREFERENCES: dict[CaptchaType, list] = {
     CaptchaType.TURNSTILE: [CaptchaProvider.TWOCAPTCHA, CaptchaProvider.ANTICAPTCHA],
     CaptchaType.RECAPTCHA_V2: [CaptchaProvider.ANTICAPTCHA, CaptchaProvider.TWOCAPTCHA],
     CaptchaType.RECAPTCHA_V3: [CaptchaProvider.TWOCAPTCHA, CaptchaProvider.ANTICAPTCHA],
@@ -49,7 +48,7 @@ class CaptchaManager:
             )
 
         self.config = config
-        self._solvers: Dict[CaptchaProvider, CaptchaSolverBase] = {}
+        self._solvers: dict[CaptchaProvider, CaptchaSolverBase] = {}
 
         # Initialize available solvers
         if config.twocaptcha_key:
@@ -70,7 +69,7 @@ class CaptchaManager:
 
     def get_available_providers(self) -> list:
         """Get list of available provider names."""
-        return [p.value for p in self._solvers.keys()]
+        return [p.value for p in self._solvers]
 
     def _get_solver_order(self, captcha_type: CaptchaType) -> list:
         """
@@ -284,7 +283,7 @@ class CaptchaManager:
 
         return CaptchaSolution(success=False, error=f"All solvers failed: {last_error}")
 
-    async def get_balances(self) -> Dict[str, float]:
+    async def get_balances(self) -> dict[str, float]:
         """
         Get balance from all configured providers.
 
@@ -311,7 +310,7 @@ class CaptchaManager:
 
         return balances
 
-    async def get_balance(self, provider: Optional[CaptchaProvider] = None) -> float:
+    async def get_balance(self, provider: CaptchaProvider | None = None) -> float:
         """
         Get balance from a specific provider or primary provider.
 
@@ -339,7 +338,7 @@ class CaptchaManager:
         return 0.0
 
 
-def create_captcha_manager(config: CaptchaConfig) -> Optional[CaptchaManager]:
+def create_captcha_manager(config: CaptchaConfig) -> CaptchaManager | None:
     """
     Factory function to create CaptchaManager if any provider is configured.
 

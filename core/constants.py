@@ -116,7 +116,7 @@ def load_referers(filepath: str = None) -> list:
 
     if filepath and os.path.exists(filepath):
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 referers = []
                 for line in f:
                     line = line.strip()
@@ -126,7 +126,7 @@ def load_referers(filepath: str = None) -> list:
                 if referers:
                     _loaded_referers = referers
                     return _loaded_referers
-        except (IOError, OSError):
+        except OSError:
             pass
 
     # Fallback to defaults

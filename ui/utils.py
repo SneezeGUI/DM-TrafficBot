@@ -1,7 +1,7 @@
-import os
 import json
 import logging
-from typing import Any, Dict, Optional
+import os
+from typing import Any
 from urllib.parse import urlparse
 
 
@@ -18,7 +18,7 @@ class Utils:
             return False
 
     @staticmethod
-    def safe_int(value: Any, default: int, min_val: Optional[int] = None, max_val: Optional[int] = None) -> int:
+    def safe_int(value: Any, default: int, min_val: int | None = None, max_val: int | None = None) -> int:
         """Safely convert value to int with optional bounds clamping."""
         try:
             v = int(value)
@@ -31,7 +31,7 @@ class Utils:
             return default
 
     @staticmethod
-    def get_flag(code: Optional[str]) -> str:
+    def get_flag(code: str | None) -> str:
         """Convert a 2-letter country code to a flag emoji."""
         if not code or len(code) != 2:
             return "🏳️"
@@ -41,9 +41,9 @@ class Utils:
             return "🏳️"
 
     @staticmethod
-    def load_settings(filename: str = "resources/settings.json") -> Dict[str, Any]:
+    def load_settings(filename: str = "resources/settings.json") -> dict[str, Any]:
         """Load settings from JSON file, returning defaults if file doesn't exist."""
-        defaults: Dict[str, Any] = {
+        defaults: dict[str, Any] = {
             "target_url": "https://example.com",
             "threads": 5,
             "viewtime_min": 5,
@@ -100,22 +100,57 @@ class Utils:
                 "wtfismyip.com": False,
             },
             "validator_test_depth": "quick",  # "quick", "normal", "thorough"
+            # Distributed Mode Settings (v3.7.0)
+            "mode": "standalone",  # "standalone", "master", "slave"
+            "master_host": "127.0.0.1",
+            "master_port": 8765,
+            "slave_secret_key": "",
+            "slave_name": "slave-01",
         }
+
+        # 1. Load from file (overrides defaults)
+        settings = defaults.copy()
         if os.path.exists(filename):
             try:
-                with open(filename, 'r') as f:
-                    return {**defaults, **json.load(f)}
-            except (json.JSONDecodeError, IOError, OSError):
+                with open(filename) as f:
+                    settings.update(json.load(f))
+            except (json.JSONDecodeError, OSError):
                 pass
-        return defaults
+
+        # 2. Environment variable overrides (highest priority)
+        # Mapping: ENV_VAR_NAME -> settings_key
+        env_map = {
+            "DM_MODE": "mode",
+            "DM_MASTER_HOST": "master_host",
+            "DM_MASTER_PORT": "master_port",
+            "DM_SLAVE_SECRET": "slave_secret_key",
+            "DM_SLAVE_NAME": "slave_name",
+            "DM_CAPTCHA_2CAPTCHA_KEY": "captcha_2captcha_key",
+            "DM_CAPTCHA_ANTICAPTCHA_KEY": "captcha_anticaptcha_key",
+            "DM_HEADLESS": "headless",
+        }
+
+        for env_key, setting_key in env_map.items():
+            if val := os.environ.get(env_key):
+                # Type conversion for int/bool
+                current_val = defaults.get(setting_key)
+
+                if isinstance(current_val, bool):
+                     settings[setting_key] = val.lower() in ('true', '1', 'yes')
+                elif isinstance(current_val, int):
+                    settings[setting_key] = Utils.safe_int(val, current_val)
+                else:
+                    settings[setting_key] = val
+
+        return settings
 
     @staticmethod
-    def save_settings(data: Dict[str, Any], filename: str = "resources/settings.json") -> None:
+    def save_settings(data: dict[str, Any], filename: str = "resources/settings.json") -> None:
         """Save settings dictionary to JSON file."""
         try:
             with open(filename, 'w') as f:
                 json.dump(data, f, indent=4)
-        except (IOError, OSError, TypeError) as e:
+        except (OSError, TypeError) as e:
             logging.error(f"Failed to save settings: {e}")
 
     @staticmethod
@@ -128,6 +163,10 @@ class Utils:
         unique: list = []
 
         for p_str in proxy_strings:
+            if not p_str:
+                continue
+
+            p_str = p_str.strip()
             if not p_str:
                 continue
 
@@ -230,7 +269,7 @@ class Utils:
                     logging.error(f"Failed to save proxies after {max_retries} attempts: {e}")
                     return False
 
-            except (IOError, OSError, TypeError) as e:
+            except (OSError, TypeError) as e:
                 logging.error(f"Failed to save proxies: {e}")
                 break
 
@@ -258,7 +297,7 @@ class Utils:
             return []
 
         try:
-            with open(filename, 'r') as f:
+            with open(filename) as f:
                 data = json.load(f)
             logging.info(f"Loaded {len(data)} proxies from {filename}")
             return data
@@ -282,7 +321,7 @@ class Utils:
                 except:
                     pass
                 return []
-        except (IOError, OSError) as e:
+        except OSError as e:
             logging.error(f"Failed to load proxies: {e}")
             return []
 
@@ -297,7 +336,7 @@ class Utils:
         - Incomplete last entry
         """
         try:
-            with open(filename, 'r', encoding='utf-8') as f:
+            with open(filename, encoding='utf-8') as f:
                 content = f.read()
         except:
             return []

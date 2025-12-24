@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import Optional
 from enum import Enum
 
 
@@ -44,8 +43,8 @@ class BrowserSelection(Enum):
 class ProxyConfig:
     host: str
     port: int
-    username: Optional[str] = None
-    password: Optional[str] = None
+    username: str | None = None
+    password: str | None = None
     protocol: str = "http"  # http, socks5
     score: float = 0.0
 
@@ -84,7 +83,7 @@ class BrowserConfig:
     fingerprint_rotation_requests: int = 50  # Rotate after N requests per context
     fingerprint_rotation_minutes: int = 30  # Or rotate after M minutes
 
-    def get_executable_path(self) -> Optional[str]:
+    def get_executable_path(self) -> str | None:
         """Get the executable path based on selection."""
         if self.selected_browser == BrowserSelection.CHROME and self.chrome_path:
             return self.chrome_path

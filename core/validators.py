@@ -4,10 +4,7 @@ Proxy Validator System - Multi-endpoint anonymity testing.
 Supports multiple validator endpoints to comprehensively test proxy anonymity,
 IP detection, and header leakage.
 """
-import re
-import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Callable
 from enum import Enum
 
 
@@ -29,14 +26,14 @@ class ValidatorResult:
     detected_ip: str = ""
     real_ip_exposed: bool = False
     # Header Analysis
-    proxy_headers_found: List[str] = field(default_factory=list)
-    forwarded_ips: List[str] = field(default_factory=list)
+    proxy_headers_found: list[str] = field(default_factory=list)
+    forwarded_ips: list[str] = field(default_factory=list)
     # Proxy Detection
     flagged_as_proxy: bool = False
     flagged_as_vpn: bool = False
     flagged_as_datacenter: bool = False
     # Raw data for debugging
-    raw_response: Dict = field(default_factory=dict)
+    raw_response: dict = field(default_factory=dict)
     error: str = ""
 
 
@@ -52,9 +49,9 @@ class AggregatedResult:
     real_ip_exposed: bool = False
     proxy_detected: bool = False
     datacenter_detected: bool = False
-    leaking_headers: List[str] = field(default_factory=list)
+    leaking_headers: list[str] = field(default_factory=list)
     # Per-validator results
-    results: List[ValidatorResult] = field(default_factory=list)
+    results: list[ValidatorResult] = field(default_factory=list)
 
 
 # Headers that expose the real IP (Transparent proxy indicators)
@@ -206,9 +203,8 @@ class HttpBinValidator(Validator):
         # Check for proxy-revealing headers
         for header in PROXY_REVEALING_HEADERS:
             value = headers.get(header, "") or headers.get(header.lower(), "")
-            if value:
-                if header not in result.proxy_headers_found:
-                    result.proxy_headers_found.append(header)
+            if value and header not in result.proxy_headers_found:
+                result.proxy_headers_found.append(header)
 
 
 class IpApiValidator(Validator):
@@ -330,9 +326,8 @@ class AzenvValidator(Validator):
                 # Check proxy-revealing headers
                 for header in PROXY_REVEALING_HEADERS:
                     env_name = "HTTP_" + header.upper().replace("-", "_")
-                    if line.startswith(env_name):
-                        if header not in result.proxy_headers_found:
-                            result.proxy_headers_found.append(header)
+                    if line.startswith(env_name) and header not in result.proxy_headers_found:
+                        result.proxy_headers_found.append(header)
 
 
 class WhatIsMyIpValidator(Validator):
@@ -354,7 +349,7 @@ class WhatIsMyIpValidator(Validator):
 
 
 # Default validators list - ordered by reliability
-DEFAULT_VALIDATORS: List[Validator] = [
+DEFAULT_VALIDATORS: list[Validator] = [
     HttpBinValidator(),
     IpApiValidator(),
     IpifyValidator(),
@@ -364,7 +359,7 @@ DEFAULT_VALIDATORS: List[Validator] = [
 ]
 
 
-def get_validator_by_name(name: str) -> Optional[Validator]:
+def get_validator_by_name(name: str) -> Validator | None:
     """Get a validator instance by name."""
     for v in DEFAULT_VALIDATORS:
         if v.name == name:
@@ -372,7 +367,7 @@ def get_validator_by_name(name: str) -> Optional[Validator]:
     return None
 
 
-def aggregate_results(results: List[ValidatorResult], real_ip: str,
+def aggregate_results(results: list[ValidatorResult], real_ip: str,
                       proxy_exit_ip: str = "", proxy_worked: bool = True) -> AggregatedResult:
     """
     Aggregate results from multiple validators into a final anonymity assessment.

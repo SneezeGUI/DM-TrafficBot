@@ -29,4 +29,6 @@ __pycache__/
 *.tmp
 
 # Large Data Files
-resources/GeoLite2-City.mmdb
+resources/GeoLite2-City.mmdbnul
+ide-errors.txt
+resources/proxies (1).json

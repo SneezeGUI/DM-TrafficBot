@@ -2,10 +2,9 @@
 Browser path detection and management for Playwright integration.
 Supports auto-detection of system browsers and manual path configuration.
 """
+import logging
 import os
 import subprocess
-import logging
-from typing import Optional, Tuple, List
 from dataclasses import dataclass
 
 
@@ -15,7 +14,7 @@ class BrowserInfo:
     name: str
     path: str
     browser_type: str = "chromium"  # "chromium" or "firefox" for Playwright
-    version: Optional[str] = None
+    version: str | None = None
     is_valid: bool = False
 
 
@@ -129,7 +128,7 @@ class BrowserManager:
     }
 
     @classmethod
-    def detect_browsers(cls) -> List[BrowserInfo]:
+    def detect_browsers(cls) -> list[BrowserInfo]:
         """
         Detect all installed browsers on Windows (Chrome, Chromium, Edge, Brave, Firefox).
         Returns list of BrowserInfo objects for each found browser.
@@ -161,7 +160,7 @@ class BrowserManager:
         return found
 
     @classmethod
-    def _get_browser_version(cls, path: str) -> Optional[str]:
+    def _get_browser_version(cls, path: str) -> str | None:
         """
         Attempt to get browser version from executable.
         Returns version string or None if unable to determine.
@@ -189,7 +188,7 @@ class BrowserManager:
         return None
 
     @classmethod
-    def validate_browser_path(cls, path: str) -> Tuple[bool, str]:
+    def validate_browser_path(cls, path: str) -> tuple[bool, str]:
         """
         Validate a browser executable path.
 
@@ -220,7 +219,7 @@ class BrowserManager:
         return True, "Browser path is valid"
 
     @classmethod
-    def get_default_browser(cls) -> Optional[str]:
+    def get_default_browser(cls) -> str | None:
         """
         Return path to first detected browser, or None.
         Priority order: Chrome > Edge > Brave > Firefox
@@ -250,7 +249,7 @@ class BrowserManager:
         return "chromium"
 
     @classmethod
-    def get_browser_info_from_path(cls, path: str) -> Optional[BrowserInfo]:
+    def get_browser_info_from_path(cls, path: str) -> BrowserInfo | None:
         """
         Get BrowserInfo for a specific path.
 
@@ -305,20 +304,19 @@ class BrowserManager:
         )
 
     @classmethod
-    def get_playwright_chromium_path(cls) -> Optional[str]:
+    def get_playwright_chromium_path(cls) -> str | None:
         """
         Get path to Playwright's bundled Chromium if installed.
         Returns None if not installed.
         """
         try:
             # Playwright stores browsers in a specific location
-            from playwright._impl._driver import compute_driver_executable
 
             # This is a heuristic - actual path varies by installation
             playwright_cache = os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright")
             if os.path.isdir(playwright_cache):
                 # Look for chromium executable
-                for root, dirs, files in os.walk(playwright_cache):
+                for root, _dirs, files in os.walk(playwright_cache):
                     for f in files:
                         if f == "chrome.exe" or f == "chromium.exe":
                             full_path = os.path.join(root, f)
@@ -330,7 +328,7 @@ class BrowserManager:
         return None
 
     @classmethod
-    def get_best_browser(cls) -> Tuple[Optional[str], str]:
+    def get_best_browser(cls) -> tuple[str | None, str]:
         """
         Get the best available browser path with source description.
 
@@ -353,7 +351,7 @@ class BrowserManager:
         return None, "No browser found"
 
     @classmethod
-    def test_browser_launch(cls, path: str, headless: bool = True) -> Tuple[bool, str]:
+    def test_browser_launch(cls, path: str, headless: bool = True) -> tuple[bool, str]:
         """
         Test if a browser can be launched successfully.
 

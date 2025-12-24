@@ -89,13 +89,46 @@
 
 ---
 
-## Backlog
+## Completed (v3.6.5 - 2025-12-22)
+
+### Foundation & Testing
+- [x] **Testing Infrastructure:** Added `tests/` directory with `pytest` and `pytest-asyncio`
+- [x] **Unit Tests:** Implemented tests for Models, Utils, and Configuration (100% pass)
+- [x] **Config Env Vars:** Implemented `DM_*` environment variable overrides for Linux slave support
+- [x] **Bug Fixes:** Fixed `ProxyConfig` serialization and `deduplicate_proxies` whitespace handling
+
+---
+
+## Completed (v3.6.1+ Refactor - 2025-12-21)
 
 ### Codebase Structure & Quality
-- [ ] **Split ui/app.py:** Break monolithic app.py into smaller component modules
-- [ ] **Standardize Testing:** Move `resources/tests` to a top-level `tests/` directory and integrate `pytest`
-- [ ] **Linting & Formatting:** Create `dev-requirements.txt` (black, pylint) for code style enforcement
-- [ ] **Unit tests for validation functions**
+- [x] **Split ui/app.py:** Modular page architecture with `ui/pages/` directory
+  - `ui/pages/dashboard.py` - Dashboard page (~500 lines)
+  - `ui/pages/proxy_manager.py` - Proxy Manager page (~350 lines)
+  - `ui/pages/stress_test.py` - Stress Test page (~360 lines)
+  - `ui/pages/settings.py` - Settings page (~350 lines)
+  - `ui/scaling.py` - DPI scaling utilities
+  - Widget binding methods for backward compatibility
+- [x] **Linting & Formatting:** Full dev tooling setup
+  - `dev-requirements.txt` (black, ruff, mypy, pytest, pre-commit)
+  - `pyproject.toml` with Black, Ruff, MyPy, Pytest configuration
+  - All files pass Black formatting and Ruff linting
+  - Fixed 27 linting issues in app.py (imports, unused vars, closure bugs, duplicates)
+
+---
+
+## Backlog
+
+### v3.7.0 Master/Slave (Next Major)
+- [ ] **Communication Layer:** WebSocket (aiohttp) with HMAC authentication
+- [ ] **Headless Client:** `slave.py` for Linux nodes
+- [ ] **Master GUI:** `ui/pages/master_control.py` for managing slaves
+- [ ] **Scanner Module:** SSH/RDP detection and credential testing
+- [ ] **Deployment:** systemd service files and install scripts
+
+### Codebase Structure & Quality
+- [ ] **Standardize Testing:** Add more tests for engine logic and validators
+- [ ] **Pre-commit hooks:** Set up pre-commit with black/ruff
 
 ### Traffic Realism Features
 - [x] **Traffic pattern randomization:** Burst/sleep patterns for more realistic traffic profiles *(v3.6.1)*
@@ -111,6 +144,17 @@
 ### User Interface & Logging
 - [ ] **File-Based Logging:** Optional file logging with rotation for debugging long sessions
 - [ ] **Session Export:** Export session statistics (Success/Fail/Proxy Count) to CSV/JSON
+
+### Master/Slave & Security Features (v3.7.0)
+- [ ] **Key Exchange:** Implement secure key-based authentication (e.g., RSA/Secret Key)
+- [ ] **Headless Client:** Develop CLI (`slave.py`) for proxy scraping and IP/port scanning
+- [ ] **SSH/RDP Scanner:** Integrate modules for SSH/RDP detection and brute-force/credential scanning
+- [ ] **Master GUI:** Design separate page for discovered SSH/RDP servers
+- [ ] **Data Sync:** Establish reliable data synchronization between master and slave (WebSockets)
+- [ ] **Error Handling:** Implement robust error reporting and retry mechanisms
+- [ ] **Configuration:** Define master/slave configuration parameters in Settings
+- [ ] **Testing:** Unit and integration tests for all components
+- [ ] **Deployment:** Outline deployment strategy for master/slave setups
 
 ---
 

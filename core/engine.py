@@ -1,26 +1,29 @@
 import asyncio
-import random
+import contextlib
 import logging
-from typing import List, Callable, Optional
+import random
+from collections.abc import Callable
+
 from curl_cffi import requests
-from .models import TrafficConfig, ProxyConfig, TrafficStats
+
 from .constants import (
-    BROWSER_IMPERSONATIONS,
     BROWSER_HEADERS,
-    get_referers,
-    REQUEST_TIMEOUT_SECONDS,
+    BROWSER_IMPERSONATIONS,
     PROXY_ERROR_CODES,
+    REQUEST_TIMEOUT_SECONDS,
     SUCCESS_STATUS_CODES,
+    get_referers,
 )
+from .models import ProxyConfig, TrafficConfig, TrafficStats
 
 
 class AsyncTrafficEngine:
     def __init__(
         self,
         config: TrafficConfig,
-        proxies: List[ProxyConfig],
-        on_update: Optional[Callable[[TrafficStats], None]] = None,
-        on_log: Optional[Callable[[str], None]] = None,
+        proxies: list[ProxyConfig],
+        on_update: Callable[[TrafficStats], None] | None = None,
+        on_log: Callable[[str], None] | None = None,
     ):
         self.config = config
         self.proxies = proxies
@@ -41,7 +44,7 @@ class AsyncTrafficEngine:
         if self.on_log:
             self.on_log(message)
 
-    async def _acquire_proxy(self) -> Optional[ProxyConfig]:
+    async def _acquire_proxy(self) -> ProxyConfig | None:
         """Acquire an available proxy for exclusive use by a task."""
         async with self._proxy_lock:
             if not self.proxies:
@@ -68,7 +71,7 @@ class AsyncTrafficEngine:
             self._proxies_in_use.add((proxy.host, proxy.port))
             return proxy
 
-    async def _release_proxy(self, proxy: Optional[ProxyConfig]):
+    async def _release_proxy(self, proxy: ProxyConfig | None):
         """Release a proxy back to the pool."""
         if proxy is None:
             return
@@ -168,10 +171,8 @@ class AsyncTrafficEngine:
 
             # Clean up session
             if session:
-                try:
+                with contextlib.suppress(Exception):
                     await session.close()
-                except Exception:
-                    pass
             self.stats.active_threads -= 1
             if self.on_update:
                 self.stats.active_proxies = len(self.proxies)

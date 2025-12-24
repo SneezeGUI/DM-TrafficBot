@@ -1,7 +1,8 @@
-import customtkinter as ctk
 from tkinter import Canvas
+
+import customtkinter as ctk
+
 from .styles import COLORS
-from .utils import Utils
 
 
 def get_scaling_factor():
